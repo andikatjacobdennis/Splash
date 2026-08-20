@@ -1,0 +1,50 @@
+<Window x:Class="PaintClone.Dialogs.IcoExportDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Export Icon (.ico)" Height="430" Width="470"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" WindowStyle="ToolWindow"
+        Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
+        FontFamily="Tahoma" FontSize="11" Background="{StaticResource XpFace}"
+        ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="0,0,0,10"
+                   Text="Choose which sizes to store in the icon. A single .ico can hold several, and Windows picks whichever fits the place it's being shown."/>
+
+        <GroupBox Grid.Row="1" Grid.Column="0" Header="Sizes to include" Margin="0,0,10,0">
+            <StackPanel x:Name="SizeList" Margin="6"/>
+        </GroupBox>
+
+        <GroupBox Grid.Row="1" Grid.Column="1" Header="Preview">
+            <StackPanel Margin="6">
+                <Border BorderBrush="{StaticResource XpBorder}" BorderThickness="1"
+                        Background="{StaticResource CheckerboardBrush}" Width="150" Height="150"
+                        HorizontalAlignment="Center">
+                    <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                </Border>
+                <TextBlock x:Name="PreviewLabel" HorizontalAlignment="Center" Margin="0,6,0,0" FontSize="10"/>
+                <TextBlock Text="The checkered backdrop shows where the icon is transparent."
+                           FontSize="9" Foreground="#666" TextWrapping="Wrap" Margin="0,6,0,0"/>
+            </StackPanel>
+        </GroupBox>
+
+        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" x:Name="SummaryText" Margin="0,10,0,0"
+                   FontSize="10" Foreground="#444" TextWrapping="Wrap"/>
+
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Select All" Width="80" Margin="0,0,6,0" Click="SelectAll_Click"/>
+            <Button Content="Export" Width="80" Margin="0,0,6,0" IsDefault="True" Click="Export_Click"/>
+            <Button Content="Cancel" Width="80" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

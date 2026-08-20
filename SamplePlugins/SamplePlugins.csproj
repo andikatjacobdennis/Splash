@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>SamplePlugins</AssemblyName>
+    <RootNamespace>SamplePlugins</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    This project deliberately does NOT reference ShellProject.csproj (the main app). A plugin is
+    any public class, in any DLL, with a public parameterless constructor and a public
+    "void Apply(WriteableBitmap)" method - ShellProject's PluginManager finds it via reflection at
+    runtime, not a compile-time interface reference. That's the whole point: write a plugin using nothing but standard WPF
+    assemblies (which UseWPF=true pulls in automatically), build it, and drop the DLL in Paint's
+    Plugins folder. See README.md in this folder for how to try it.
+  -->
+
+</Project>

@@ -1,0 +1,41 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast, cross-platform checks: C# syntax plus the cross-file consistency rules a compiler
+  # can't see (XAML handlers with no method, tools missing from the toolbox, duplicate
+  # shortcut bindings, enum values with no dispatch branch).
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parser
+        run: pip install tree_sitter tree_sitter_c_sharp
+      - name: Run project verification
+        run: python3 tools/verify.py
+
+  # The real thing. WPF is Windows-only, so this is the job that actually proves the app
+  # compiles - the verifier above is a fast pre-filter, not a substitute for this.
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the app
+        run: dotnet build ShellProject/ShellProject.csproj -c Release --nologo
+      - name: Build the sample plugins
+        run: dotnet build SamplePlugins/SamplePlugins.csproj -c Release --nologo
+      - name: Publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: splash-build
+          path: ShellProject/bin/Release/net10.0-windows/

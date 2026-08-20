@@ -1,0 +1,210 @@
+<Window x:Class="PaintClone.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="untitled - Splash" Height="680" Width="700"
+        MinHeight="640" MinWidth="580"
+        Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
+        FontFamily="Tahoma" FontSize="11"
+        Background="{StaticResource XpFace}"
+        Closing="Window_Closing">
+    <Grid>
+    <DockPanel LastChildFill="True">
+
+        <!-- ===================== MENU BAR ===================== -->
+        <Menu DockPanel.Dock="Top" x:Name="MainMenu">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New" InputGestureText="Ctrl+N" Click="New_Click"/>
+                <MenuItem Header="_Open..." InputGestureText="Ctrl+O" Click="Open_Click"/>
+                <MenuItem Header="_Save" InputGestureText="Ctrl+S" Click="Save_Click"/>
+                <MenuItem Header="Save _As..." Click="SaveAs_Click"/>
+                <Separator/>
+                <MenuItem Header="Print Pre_view" Click="PrintPreview_Click"/>
+                <MenuItem Header="Page Set_up..." Click="PageSetup_Click"/>
+                <MenuItem Header="_Print..." InputGestureText="Ctrl+P" Click="Print_Click"/>
+                <Separator/>
+                <MenuItem Header="E_xit" Click="Exit_Click"/>
+            </MenuItem>
+
+            <MenuItem Header="_Edit">
+                <MenuItem x:Name="MenuUndo" Header="_Undo" InputGestureText="Ctrl+Z" Click="Undo_Click"/>
+                <MenuItem x:Name="MenuRedo" Header="_Repeat" InputGestureText="Ctrl+Y" Click="Redo_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuCut" Header="Cu_t" InputGestureText="Ctrl+X" Click="Cut_Click"/>
+                <MenuItem x:Name="MenuCopy" Header="_Copy" InputGestureText="Ctrl+C" Click="Copy_Click"/>
+                <MenuItem x:Name="MenuPaste" Header="_Paste" InputGestureText="Ctrl+V" Click="Paste_Click"/>
+                <MenuItem x:Name="MenuClearSel" Header="C_lear Selection" InputGestureText="Del" Click="ClearSelection_Click"/>
+                <MenuItem Header="Select _All" InputGestureText="Ctrl+A" Click="SelectAll_Click"/>
+            </MenuItem>
+
+            <MenuItem Header="_View">
+                <MenuItem x:Name="MenuToolbox" Header="_Tool Box" IsCheckable="True" IsChecked="True" Click="ToggleToolbox_Click"/>
+                <MenuItem x:Name="MenuColorBox" Header="Color _Box" IsCheckable="True" IsChecked="True" Click="ToggleColorBox_Click"/>
+                <MenuItem x:Name="MenuStatusBar" Header="_Status Bar" IsCheckable="True" IsChecked="True" Click="ToggleStatusBar_Click"/>
+                <Separator/>
+                <MenuItem Header="_Zoom">
+                    <MenuItem Header="100%" Click="Zoom100_Click"/>
+                    <MenuItem Header="200%" Click="Zoom200_Click"/>
+                    <MenuItem Header="400%" Click="Zoom400_Click"/>
+                    <MenuItem Header="600%" Click="Zoom600_Click"/>
+                    <MenuItem Header="800%" Click="Zoom800_Click"/>
+                    <Separator/>
+                    <MenuItem x:Name="MenuShowGrid" Header="Show _Grid" IsCheckable="True" Click="ToggleGrid_Click"/>
+                </MenuItem>
+                <Separator/>
+                <MenuItem x:Name="MenuHistoryWindow" Header="_History Window" IsCheckable="True" Click="ToggleHistoryWindow_Click"/>
+                <MenuItem x:Name="MenuLayersWindow" Header="_Layers Window" IsCheckable="True" Click="ToggleLayersWindow_Click"/>
+                <Separator/>
+                <MenuItem Header="_Keyboard Shortcuts..." Click="ShortcutManager_Click"/>
+            </MenuItem>
+
+            <MenuItem Header="_Image">
+                <MenuItem Header="Flip/Rotate...">
+                    <MenuItem Header="Flip _Horizontal" Click="FlipH_Click"/>
+                    <MenuItem Header="Flip _Vertical" Click="FlipV_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Rotate by 9_0°" Click="Rotate90_Click"/>
+                    <MenuItem Header="Rotate by 1_80°" Click="Rotate180_Click"/>
+                    <MenuItem Header="Rotate by 2_70°" Click="Rotate270_Click"/>
+                </MenuItem>
+                <MenuItem Header="_Stretch/Skew..." Click="StretchSkew_Click"/>
+                <MenuItem Header="_Invert Colors" InputGestureText="Ctrl+I" Click="Invert_Click"/>
+                <MenuItem Header="_Attributes..." InputGestureText="Ctrl+E" Click="Attributes_Click"/>
+                <MenuItem Header="_Clear Image" InputGestureText="Ctrl+Shift+N" Click="ClearImage_Click"/>
+                <MenuItem x:Name="MenuAlignSelection" Header="Ali_gn Selection" IsEnabled="False">
+                    <MenuItem Header="_Left"          Tag="Left"        Click="AlignSelection_Click"/>
+                    <MenuItem Header="Center _Across" Tag="CenterH"     Click="AlignSelection_Click"/>
+                    <MenuItem Header="_Right"         Tag="Right"       Click="AlignSelection_Click"/>
+                    <Separator/>
+                    <MenuItem Header="_Top"           Tag="Top"         Click="AlignSelection_Click"/>
+                    <MenuItem Header="Center _Down"   Tag="CenterV"     Click="AlignSelection_Click"/>
+                    <MenuItem Header="_Bottom"        Tag="Bottom"      Click="AlignSelection_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Top L_eft"      Tag="TopLeft"     Click="AlignSelection_Click"/>
+                    <MenuItem Header="Top Ri_ght"     Tag="TopRight"    Click="AlignSelection_Click"/>
+                    <MenuItem Header="Bottom Le_ft"   Tag="BottomLeft"  Click="AlignSelection_Click"/>
+                    <MenuItem Header="Bottom Rig_ht"  Tag="BottomRight" Click="AlignSelection_Click"/>
+                    <Separator/>
+                    <MenuItem Header="_Center in Canvas" Tag="Center"   Click="AlignSelection_Click"/>
+                </MenuItem>
+                <Separator/>
+                <MenuItem x:Name="MenuDrawOpaque" Header="Draw O_paque" IsCheckable="True" IsChecked="True" Click="DrawOpaque_Click"/>
+            </MenuItem>
+
+            <MenuItem Header="_Colors">
+                <MenuItem Header="_Edit Colors..." Click="EditColors_Click"/>
+            </MenuItem>
+
+            <MenuItem x:Name="MenuPlugins" Header="Pl_ugins"/>
+
+            <MenuItem Header="_Help">
+                <MenuItem Header="Help _Topics" Click="HelpTopics_Click"/>
+                <Separator/>
+                <MenuItem Header="_About Paint" Click="About_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <!-- ===================== STATUS BAR ===================== -->
+        <StatusBar DockPanel.Dock="Bottom" x:Name="AppStatusBar" Height="22">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="For Help, click Help Topics on the Help Menu." Margin="4,0"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="StatusCoords" Text="" Width="110" TextAlignment="Center"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock x:Name="StatusSize" Text="" Width="130" TextAlignment="Center"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- ===================== MAIN CONTENT ===================== -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Toolbox -->
+            <Border x:Name="ToolboxPanel" Grid.Column="0" Style="{StaticResource SunkenPanel}" Width="78" Margin="2">
+                <DockPanel>
+                    <UniformGrid x:Name="ToolGrid" DockPanel.Dock="Top" Columns="2" Rows="10" Margin="1"/>
+                    <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource XpBorder}" BorderThickness="1"
+                            MinHeight="90" Margin="1" Background="{StaticResource XpFaceDark}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="ToolOptionsPanel" Margin="4"/>
+                        </ScrollViewer>
+                    </Border>
+                </DockPanel>
+            </Border>
+
+            <!-- Palette + Canvas -->
+            <DockPanel Grid.Column="1">
+
+                <!-- Color palette row -->
+                <Border DockPanel.Dock="Top" Style="{StaticResource SunkenPanel}" Height="52" Margin="2" x:Name="ColorBoxPanel">
+                    <StackPanel Orientation="Horizontal" Margin="2">
+                        <!-- Foreground/background indicator -->
+                        <Grid Width="38" Height="38" Margin="4,3,8,3">
+                            <Border x:Name="BgSwatch" Width="24" Height="24" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    BorderBrush="Black" BorderThickness="1" Background="White"
+                                    MouseLeftButtonDown="BgSwatch_Click" MouseRightButtonDown="BgSwatch_RightClick"/>
+                            <Border x:Name="FgSwatch" Width="24" Height="24" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    BorderBrush="Black" BorderThickness="1" Background="Black"
+                                    MouseLeftButtonDown="FgSwatch_Click" MouseRightButtonDown="FgSwatch_RightClick"/>
+                        </Grid>
+                        <Border x:Name="TransparentSwatch" Width="24" Height="24" Margin="0,10,8,10"
+                                BorderBrush="Black" BorderThickness="1" Background="{StaticResource CheckerboardBrush}"
+                                Cursor="Hand" ToolTip="Transparent - left-click sets foreground, right-click sets background"
+                                MouseLeftButtonDown="TransparentSwatch_Click" MouseRightButtonDown="TransparentSwatch_RightClick"/>
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                      MaxWidth="620" VerticalAlignment="Center">
+                            <UniformGrid x:Name="PaletteGrid" Rows="2" Columns="50" Width="600" Height="34"/>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+
+                <!-- Canvas area with scrollbars -->
+                <Border BorderBrush="{StaticResource XpBorder}" BorderThickness="2" Margin="2" Background="#808080">
+                    <ScrollViewer x:Name="CanvasScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                  Background="#808080">
+                        <Grid Background="#808080">
+                            <Border x:Name="CanvasHost" Background="{StaticResource CheckerboardBrush}" BorderBrush="Black" BorderThickness="1"
+                                    HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6">
+                                <Grid x:Name="CanvasStack">
+                                    <Rectangle x:Name="GridOverlay" IsHitTestVisible="False" Visibility="Collapsed"/>
+                                    <Rectangle x:Name="CanvasResizePreview" Stroke="Black" StrokeDashArray="4,2" Fill="Transparent"
+                                               IsHitTestVisible="False" Visibility="Collapsed"
+                                               HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                    <Canvas x:Name="TextOverlayLayer" Background="Transparent" IsHitTestVisible="False"/>
+                                    <Canvas x:Name="HandleLayer"/>
+                                    <Rectangle x:Name="EraserOutline" Stroke="Black" StrokeThickness="1" Fill="Transparent"
+                                               IsHitTestVisible="False" Visibility="Collapsed"
+                                               HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </ScrollViewer>
+                </Border>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+
+    <!-- Full-screen image view (F11): sits above the whole UI so nothing but the picture shows. -->
+    <Grid x:Name="FullScreenOverlay" Background="#111111" Visibility="Collapsed"
+          Focusable="True" MouseLeftButtonDown="FullScreenOverlay_Click">
+        <!-- Checkerboard sits directly behind the picture and is sized to the picture's own
+             rendered bounds, so transparent areas read as transparent rather than as the dark
+             backdrop (which made them look solid black). -->
+        <Border Background="{StaticResource CheckerboardBrush}"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                Width="{Binding ActualWidth, ElementName=FullScreenImage}"
+                Height="{Binding ActualHeight, ElementName=FullScreenImage}"/>
+        <Image x:Name="FullScreenImage" Stretch="Uniform" Margin="20"
+               RenderOptions.BitmapScalingMode="HighQuality"/>
+        <TextBlock x:Name="FullScreenHint" Text="Press F11 or Esc to exit full screen"
+                   Foreground="#888888" FontSize="12" HorizontalAlignment="Center"
+                   VerticalAlignment="Bottom" Margin="0,0,0,12"/>
+    </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,726 @@
+using System;
+using System.Collections.Generic;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using PaintClone.Controls;
+using PaintClone.Models;
+
+namespace PaintClone.Tools
+{
+    /// <summary>Shared drag-preview-commit workflow used by Line/Rectangle/Ellipse/RoundedRectangle
+    /// (spec section 38): nothing touches the real document until mouse-up.</summary>
+    public abstract class DragShapeToolBase : ITool
+    {
+        public abstract string Name { get; }
+        public abstract string StatusHint { get; }
+
+        /// <summary>The key this tool is registered under in MainWindow's tool table. Defaults to
+        /// the name with spaces stripped, which matches every current registration.</summary>
+        public virtual string ToolKey => Name.Replace(" ", "");
+
+        protected bool _active;
+        protected Point _start;
+        protected MouseButton _button;
+        private Point? _lastPreviewEnd;
+
+        /// <summary>True for tools whose Shift constraint should snap the *direction* to 45-degree
+        /// increments (which includes horizontal and vertical), rather than forcing a square
+        /// bounding box. Line-like tools want the former; box-like shapes want the latter.</summary>
+        protected virtual bool ConstrainsToAngle => false;
+
+        /// <summary>Extra padding, beyond the stroke-thickness allowance, that this shape's
+        /// rendering can extend past its start/end bounding box. Arrowheads stick out perpendicular
+        /// to the line, so without this the head gets clipped when the pending shape is re-rendered
+        /// into a tightly-fitted bitmap.</summary>
+        protected virtual int ExtraPad(ToolContext ctx) => 0;
+
+        /// <summary>False for tools whose output isn't meaningfully adjustable after the fact, so
+        /// it should be committed immediately instead of becoming a selected, still-editable
+        /// pending shape. The pending-shape flow exists so a drawn shape can be nudged or resized
+        /// before it's made permanent; for something that simply fills the region it was dragged
+        /// over, being left with a selection to dismiss is friction rather than a feature.</summary>
+        protected virtual bool UsesPendingShape => true;
+
+        /// <summary>False for tools that paint right up to their bounding box with no stroke
+        /// spilling past it. Those get no padding at all - padding would leave an unpainted border
+        /// around the shape once it's re-rendered into its (padded) pending-shape bitmap.</summary>
+        protected virtual bool UsesStrokePadding => true;
+
+        public virtual void OnMouseDown(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            // Clear any marquee left over from the previous shape (see OnMouseUp below) so it
+            // doesn't linger, visually confusingly, while a new shape is being drawn.
+            if (ctx.Selection.HasSelection) ctx.Selection.Deselect(ctx.Document.Surface);
+            ctx.Canvas.ShowSelection(null);
+
+            _active = true;
+            _start = e.DocPointInt;
+            _button = e.Button;
+            _lastPreviewEnd = null;
+        }
+
+        public virtual void OnMouseMove(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            if (!_active) return;
+            var end = ConstrainedEnd(e);
+            _lastPreviewEnd = end;
+            ctx.Canvas.ClearPreview();
+            ctx.Canvas.PreviewSurface.Lock();
+            ctx.Canvas.PreviewSurface.AntiAlias = ctx.AntiAlias;
+            DrawPreview(ctx, _start, end, ctx.Canvas.PreviewSurface);
+            ctx.Canvas.PreviewSurface.AntiAlias = false;
+            ctx.Canvas.PreviewSurface.Unlock();
+        }
+
+        public virtual void OnMouseUp(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            if (!_active) return;
+            _active = false;
+            // Reuse whatever point the preview last actually showed, rather than recomputing from
+            // this event's own coordinates - those can genuinely differ from the last MouseMove's
+            // position (a physical button release rarely lands at the exact same pixel as the last
+            // move sample), which was the cause of the final shape occasionally not matching what
+            // was just previewed. Only fall back to this event's own point for a plain click with
+            // no drag at all, where no MouseMove ever fired.
+            var end = _lastPreviewEnd ?? ConstrainedEnd(e);
+            ctx.Canvas.ClearPreview();
+
+            // Padding accounts for thick outlines: StampSquare-based strokes are centered ON each
+            // boundary point rather than inset from it, so they can extend up to PenSize/2 pixels
+            // beyond the mathematically exact bounding box.
+            int pad = UsesStrokePadding ? Math.Max(0, ctx.PenSize / 2 + 1) + ExtraPad(ctx) : 0;
+            var raw = NormalizedRect(_start, end);
+
+            // Hand the shape to MainWindow as a *pending* shape rather than rasterizing it here.
+            // It stays unrasterized - re-rendered from these original start/end parameters on
+            // every move/resize - until the selection is committed, so repeatedly adjusting it
+            // never resamples a previous render and never degrades quality. MainWindow switches
+            // to the Select tool so it's immediately draggable.
+            if (UsesPendingShape && raw.Width > 1 && raw.Height > 1 && ctx.BeginPendingShape != null)
+            {
+                ctx.BeginPendingShape(new PendingShape
+                {
+                    Render = (s, en, surface) => DrawPreview(ctx, s, en, surface),
+                    Start = _start,
+                    End = end,
+                    Pad = pad,
+                    Label = Name,
+                    OriginToolKey = ToolKey
+                });
+                return;
+            }
+
+            // Reached either by a tool that opts out of the pending-shape flow, or by a
+            // degenerate (essentially zero-area) drag that isn't worth a selection. Either way the
+            // result goes straight into the document and the current tool stays selected.
+            ctx.History.PushUndoState(ctx.Document, Name);
+            ctx.Document.Surface.Lock();
+            ctx.Document.Surface.AntiAlias = ctx.AntiAlias;
+            DrawPreview(ctx, _start, end, ctx.Document.Surface);
+            ctx.Document.Surface.AntiAlias = false;
+            ctx.Document.Surface.Unlock();
+            ctx.Document.MarkDirty();
+        }
+
+        public virtual void Cancel(ToolContext ctx)
+        {
+            _active = false;
+            _lastPreviewEnd = null;
+            ctx.Canvas.ClearPreview();
+        }
+
+        private Point ConstrainedEnd(CanvasMouseEventArgs e)
+        {
+            var end = e.DocPointInt;
+            if (e.ShiftDown)
+            {
+                // Shift constrains to square/circle bounding box or 45-degree lines (spec sections 23,25,27,28).
+                double dx = end.X - _start.X, dy = end.Y - _start.Y;
+                if (ConstrainsToAngle)
+                {
+                    double angle = Math.Atan2(dy, dx);
+                    double snapped = Math.Round(angle / (Math.PI / 4)) * (Math.PI / 4);
+                    double len = Math.Sqrt(dx * dx + dy * dy);
+                    end = new Point(_start.X + Math.Cos(snapped) * len, _start.Y + Math.Sin(snapped) * len);
+                }
+                else
+                {
+                    double side = Math.Max(Math.Abs(dx), Math.Abs(dy));
+                    end = new Point(_start.X + Math.Sign(dx == 0 ? 1 : dx) * side, _start.Y + Math.Sign(dy == 0 ? 1 : dy) * side);
+                }
+            }
+            return end;
+        }
+
+        protected static Int32Rect NormalizedRect(Point a, Point b)
+        {
+            int x = (int)Math.Min(a.X, b.X);
+            int y = (int)Math.Min(a.Y, b.Y);
+            int w = (int)Math.Abs(b.X - a.X);
+            int h = (int)Math.Abs(b.Y - a.Y);
+            return new Int32Rect(x, y, Math.Max(w, 1), Math.Max(h, 1));
+        }
+
+        protected (Color outline, Color fill, bool fill_) ResolveColors(ToolContext ctx)
+        {
+            // Left-drag: outline=foreground, fill=background. Right-drag: swapped (classic Paint convention).
+            Color outline = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
+            Color fill = _button == MouseButton.Right ? ctx.Colors.Foreground : ctx.Colors.Background;
+            bool doFill = ctx.ShapeFillMode != ShapeFillMode.OutlineOnly;
+            if (ctx.ShapeFillMode == ShapeFillMode.FillOnly) outline = fill;
+            return (outline, fill, doFill);
+        }
+
+        protected abstract void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface);
+    }
+
+    public class LineTool : DragShapeToolBase
+    {
+        public override string Name => "Line";
+        public override string StatusHint => "Click and drag to draw a line.";
+        protected override bool ConstrainsToAngle => true;
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var c = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
+            surface.DrawLine((int)start.X, (int)start.Y, (int)end.X, (int)end.Y, c, Math.Max(1, ctx.PenSize));
+        }
+    }
+
+    public class RectangleTool : DragShapeToolBase
+    {
+        public override string Name => "Rectangle";
+        public override string StatusHint => "Click and drag to draw a rectangle.";
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var (outline, fill, doFill) = ResolveColors(ctx);
+            surface.DrawRect(NormalizedRect(start, end), outline, Math.Max(1, ctx.PenSize), doFill, fill);
+        }
+    }
+
+    public class EllipseTool : DragShapeToolBase
+    {
+        public override string Name => "Ellipse";
+        public override string StatusHint => "Click and drag to draw an ellipse.";
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var (outline, fill, doFill) = ResolveColors(ctx);
+            surface.DrawEllipse(NormalizedRect(start, end), outline, Math.Max(1, ctx.PenSize), doFill, fill);
+        }
+    }
+
+    public class RoundedRectangleTool : DragShapeToolBase
+    {
+        public override string Name => "Rounded Rectangle";
+        public override string StatusHint => "Click and drag to draw a rounded rectangle.";
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var (outline, fill, doFill) = ResolveColors(ctx);
+            var r = NormalizedRect(start, end);
+            int radius = Math.Max(4, Math.Min(r.Width, r.Height) / 4);
+            surface.DrawRoundedRect(r, radius, outline, Math.Max(1, ctx.PenSize), doFill, fill);
+        }
+    }
+
+    /// <summary>Line with an arrowhead at the end point - drawn by reusing the base line plus two
+    /// short barbs, each rotated off the line's own direction so the head always points the way the
+    /// line travels regardless of drag direction.</summary>
+    public class ArrowTool : DragShapeToolBase
+    {
+        public override string Name => "Arrow";
+        public override string StatusHint => "Drag to draw an arrow; hold Shift to snap to 45-degree angles.";
+
+        // Arrows are line-like, so Shift should snap the direction (giving horizontal and vertical
+        // as well as the diagonals) rather than forcing a square bounding box.
+        protected override bool ConstrainsToAngle => true;
+
+        /// <summary>Arrowheads stick out perpendicular to the line, so the drawn shape extends
+        /// past the plain start/end box by roughly the head's length. Without allowing for that
+        /// here, re-rendering the pending shape into a tightly-fitted bitmap clipped the head -
+        /// most visibly when the selection was dragged shorter vertically.</summary>
+        protected override int ExtraPad(ToolContext ctx) => (int)Math.Ceiling(HeadLength(ctx, double.MaxValue)) + 2;
+
+        private static double HeadLength(ToolContext ctx, double lineLen)
+        {
+            int thickness = Math.Max(1, ctx.PenSize);
+            // Scales with stroke weight and line length, so it stays proportionate on a short thin
+            // arrow and a long thick one alike.
+            return Math.Min(lineLen * 0.35, 10 + thickness * 3);
+        }
+
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var c = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
+            int thickness = Math.Max(1, ctx.PenSize);
+            surface.DrawLine((int)start.X, (int)start.Y, (int)end.X, (int)end.Y, c, thickness);
+
+            double dx = end.X - start.X, dy = end.Y - start.Y;
+            double len = Math.Sqrt(dx * dx + dy * dy);
+            if (len < 1 || ctx.ArrowStyle == ArrowStyle.None) return;
+
+            double angle = Math.Atan2(dy, dx);
+            double headLen = HeadLength(ctx, len);
+
+            bool filled = ctx.ArrowStyle is ArrowStyle.Filled or ArrowStyle.FilledBoth;
+            bool bothEnds = ctx.ArrowStyle is ArrowStyle.Both or ArrowStyle.FilledBoth;
+
+            DrawHead(ctx, surface, end, angle, headLen, thickness, c, filled);
+            if (bothEnds) DrawHead(ctx, surface, start, angle + Math.PI, headLen, thickness, c, filled);
+        }
+
+        /// <summary>Draws one arrowhead at tip, pointing along dir.</summary>
+        private static void DrawHead(ToolContext ctx, RasterSurface surface, Point tip, double dir,
+                                     double headLen, int thickness, Color c, bool filled)
+        {
+            const double spread = Math.PI / 7;
+            double a1 = dir + Math.PI + spread;
+            double a2 = dir + Math.PI - spread;
+            var b1 = new Point(tip.X + Math.Cos(a1) * headLen, tip.Y + Math.Sin(a1) * headLen);
+            var b2 = new Point(tip.X + Math.Cos(a2) * headLen, tip.Y + Math.Sin(a2) * headLen);
+
+            if (filled)
+            {
+                PolygonTool.FillPolygon(surface, new List<Point> { tip, b1, b2 }, c);
+                // Outline it too, so a solid head still reads cleanly at small sizes where the
+                // scanline fill alone can look ragged.
+                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b1.X, (int)b1.Y, c, thickness);
+                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b2.X, (int)b2.Y, c, thickness);
+                surface.DrawLine((int)b1.X, (int)b1.Y, (int)b2.X, (int)b2.Y, c, thickness);
+            }
+            else
+            {
+                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b1.X, (int)b1.Y, c, thickness);
+                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b2.X, (int)b2.Y, c, thickness);
+            }
+        }
+    }
+
+    /// <summary>Five-pointed star inscribed in the dragged bounding box.</summary>
+    public class StarTool : DragShapeToolBase
+    {
+        public override string Name => "Star";
+        public override string StatusHint => "Click and drag to draw a star; choose the number of points in the tool options.";
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var (outline, fill, doFill) = ResolveColors(ctx);
+            var r = NormalizedRect(start, end);
+            double cx = r.X + r.Width / 2.0, cy = r.Y + r.Height / 2.0;
+            double rx = r.Width / 2.0, ry = r.Height / 2.0;
+            int points = Math.Max(3, Math.Min(12, ctx.StarPoints));
+            var pts = new List<Point>();
+            for (int i = 0; i < points * 2; i++)
+            {
+                // Alternate outer/inner radius to make the points; start at -90 degrees so the
+                // star sits upright rather than rotated.
+                // Inner radius shrinks as the point count rises - a fixed 0.4 makes a 12-point
+                // star look like a gear rather than a star.
+                double innerFrac = Math.Max(0.25, 0.55 - points * 0.03);
+                double frac = i % 2 == 0 ? 1.0 : innerFrac;
+                double a = -Math.PI / 2 + i * Math.PI / points;
+                pts.Add(new Point(cx + Math.Cos(a) * rx * frac, cy + Math.Sin(a) * ry * frac));
+            }
+            if (doFill) PolygonTool.FillPolygon(surface, pts, fill);
+            for (int i = 0; i < pts.Count; i++)
+            {
+                var a = pts[i];
+                var b = pts[(i + 1) % pts.Count];
+                surface.DrawLine((int)a.X, (int)a.Y, (int)b.X, (int)b.Y, outline, Math.Max(1, ctx.PenSize));
+            }
+        }
+    }
+
+    /// <summary>Linear gradient between the foreground and background colours, drawn across the
+    /// dragged bounding box. The drag direction sets the gradient axis, so dragging diagonally
+    /// gives a diagonal blend rather than being locked to horizontal/vertical.</summary>
+    /// <summary>
+    /// Blends the foreground colour into the background colour across the dragged area. The drag
+    /// defines the gradient's axis: its start is where the blend begins and its end where it
+    /// finishes, so both the angle and how gradual the blend is come from the drag itself.
+    /// Five blend shapes are offered, and the result is dithered by default because an 8-bit
+    /// channel can only step in whole units - a slow blend across a wide area would otherwise
+    /// show obvious banding.
+    /// </summary>
+    public class GradientTool : DragShapeToolBase
+    {
+        public override string Name => "Gradient";
+        public override string StatusHint => "Drag to blend the foreground colour into the background colour; the drag sets the angle and length.";
+        protected override bool ConstrainsToAngle => true;
+
+        // A gradient paints exactly its dragged box - no stroke spills past it, so no padding.
+        protected override bool UsesStrokePadding => false;
+
+        // Committed straight away rather than left as a movable selection. A gradient fills the
+        // area you dragged over; there's no useful "now reposition it" step, so the selection was
+        // just something to dismiss. Committing directly also keeps the tool selected, so several
+        // gradients can be laid down in a row, and it avoids the re-render round trip entirely -
+        // which is where the colour-drift problems came from.
+        protected override bool UsesPendingShape => false;
+
+        // Deterministic 4x4 Bayer matrix: an ordered dither, which for a smooth gradient looks
+        // far cleaner than random noise and, being fixed, means re-rendering the same gradient
+        // always produces identical output (important now that pending shapes re-render on resize).
+        private static readonly int[,] Bayer4 =
+        {
+            {  0,  8,  2, 10 },
+            { 12,  4, 14,  6 },
+            {  3, 11,  1,  9 },
+            { 15,  7, 13,  5 },
+        };
+
+        protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
+        {
+            var from = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
+            var to = _button == MouseButton.Right ? ctx.Colors.Foreground : ctx.Colors.Background;
+
+            double dx = end.X - start.X, dy = end.Y - start.Y;
+            double lenSq = dx * dx + dy * dy;
+            if (lenSq < 1) return;
+            double len = Math.Sqrt(lenSq);
+
+            // Paint only the dragged box, clipped to the surface. This has to be the box rather
+            // than the whole surface: during rubber-banding the surface handed in is the full-canvas
+            // preview layer, but on commit it's a bitmap the size of the box - so filling "the whole
+            // surface" made the preview cover the entire canvas while the committed result covered
+            // only the dragged area. Deriving the region from the drag itself makes both identical.
+            var box = NormalizedRect(start, end);
+            int xStart = Math.Max(0, box.X), yStart = Math.Max(0, box.Y);
+            int xEnd = Math.Min(surface.Width, box.X + box.Width);
+            int yEnd = Math.Min(surface.Height, box.Y + box.Height);
+
+            for (int y = yStart; y < yEnd; y++)
+            {
+                for (int x = xStart; x < xEnd; x++)
+                {
+                    double t = ComputeT(ctx.GradientType, x, y, start, end, dx, dy, lenSq, len);
+                    t = Math.Max(0, Math.Min(1, t));
+
+                    if (ctx.GradientDither)
+                    {
+                        // Nudge the position by up to one output step before quantising, so the
+                        // hard edge between two adjacent output values is broken up into a fine
+                        // interleave instead of a visible band boundary.
+                        // Keyed to the pixel's offset from the gradient's own start point, NOT to
+                        // raw surface coordinates. Those differ between the two times a gradient is
+                        // rendered - during rubber-banding the surface is the full canvas, so x/y
+                        // are document coordinates, while the pending-shape re-render draws into a
+                        // box-sized bitmap where they start at zero. Keying on raw coordinates
+                        // therefore shifted the dither pattern between the two, which showed up as
+                        // the colour subtly changing the moment the selection appeared. The offset
+                        // from start is identical in both spaces, so the pattern now lines up.
+                        int dxi = x - (int)start.X, dyi = y - (int)start.Y;
+                        double noise = (Bayer4[((dyi % 4) + 4) % 4, ((dxi % 4) + 4) % 4] + 0.5) / 16.0 - 0.5;
+                        t = Math.Max(0, Math.Min(1, t + noise / 255.0));
+                    }
+
+                    surface.SetPixel(x, y, Color.FromArgb(
+                        (byte)Math.Round(from.A + (to.A - from.A) * t),
+                        (byte)Math.Round(from.R + (to.R - from.R) * t),
+                        (byte)Math.Round(from.G + (to.G - from.G) * t),
+                        (byte)Math.Round(from.B + (to.B - from.B) * t)));
+                }
+            }
+        }
+
+        /// <summary>Position along the blend (0 = start colour, 1 = end colour) for one pixel,
+        /// according to the selected gradient shape.</summary>
+        private static double ComputeT(GradientType type, int x, int y, Point start, Point end,
+                                       double dx, double dy, double lenSq, double len)
+        {
+            double px = x - start.X, py = y - start.Y;
+            switch (type)
+            {
+                case GradientType.Reflected:
+                    // Same projection as linear, mirrored so both directions blend away from start.
+                    return Math.Abs((px * dx + py * dy) / lenSq);
+
+                case GradientType.Radial:
+                    return Math.Sqrt(px * px + py * py) / len;
+
+                case GradientType.Diamond:
+                    // Chebyshev-style distance gives square-cornered rings rather than circles.
+                    return (Math.Abs(px * dx + py * dy) + Math.Abs(px * dy - py * dx)) / lenSq;
+
+                case GradientType.Angular:
+                    // Angle around the start point, normalised to 0..1 for a full sweep.
+                    double ang = Math.Atan2(py, px) - Math.Atan2(dy, dx);
+                    while (ang < 0) ang += Math.PI * 2;
+                    return ang / (Math.PI * 2);
+
+                case GradientType.Linear:
+                default:
+                    // Linear - project the pixel onto the drag vector. Listed explicitly rather
+                    // than left to `default` alone so that adding a new GradientType without a
+                    // matching branch is caught by the verifier instead of silently rendering as
+                    // a linear blend.
+                    return (px * dx + py * dy) / lenSq;
+            }
+        }
+    }
+
+    /// <summary>Click to add vertices, double-click (or Enter) to close the polygon (spec section 26).</summary>
+    public class PolygonTool : ITool
+    {
+        public string Name => "Polygon";
+        public string StatusHint => "Click to place vertices; double-click to finish the polygon.";
+
+        private readonly List<Point> _points = new();
+        private MouseButton _button;
+        private bool _active;
+
+        public void OnMouseDown(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            if (!_active)
+            {
+                if (ctx.Selection.HasSelection) ctx.Selection.Deselect(ctx.Document.Surface);
+                ctx.Canvas.ShowSelection(null);
+                _active = true; _button = e.Button; _points.Clear();
+            }
+            _points.Add(e.DocPointInt);
+        }
+
+        public void OnMouseMove(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            if (!_active || _points.Count == 0) return;
+            ctx.Canvas.ClearPreview();
+            ctx.Canvas.PreviewSurface.Lock();
+            for (int i = 0; i < _points.Count - 1; i++)
+                DrawSeg(ctx, ctx.Canvas.PreviewSurface, _points[i], _points[i + 1]);
+            DrawSeg(ctx, ctx.Canvas.PreviewSurface, _points[^1], e.DocPointInt);
+            ctx.Canvas.PreviewSurface.Unlock();
+        }
+
+        public void OnMouseUp(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            // Double-click detection: WPF raises two down+up pairs; MainWindow forwards a flag via ClickCount
+            // is not directly available here, so we treat a click very near the first point, or an explicit
+            // Finish() call (wired to double-click in MainWindow), as closing the polygon.
+        }
+
+        public void Finish(ToolContext ctx)
+        {
+            if (!_active || _points.Count < 2) { Cancel(ctx); return; }
+            ctx.Canvas.ClearPreview();
+            ctx.History.PushUndoState(ctx.Document, "Polygon");
+            ctx.Document.Surface.Lock();
+            var (outline, fill, _) = Resolve(ctx);
+            bool doFill = ctx.ShapeFillMode != ShapeFillMode.OutlineOnly;
+            if (doFill) FillPolygon(ctx.Document.Surface, _points, fill);
+            for (int i = 0; i < _points.Count; i++)
+                DrawSeg(ctx, ctx.Document.Surface, _points[i], _points[(i + 1) % _points.Count]);
+            ctx.Document.Surface.Unlock();
+            ctx.Document.MarkDirty();
+            _active = false;
+            _points.Clear();
+        }
+
+        private (Color outline, Color fill, bool _) Resolve(ToolContext ctx)
+        {
+            Color outline = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
+            Color fill = _button == MouseButton.Right ? ctx.Colors.Foreground : ctx.Colors.Background;
+            return (outline, fill, true);
+        }
+
+        private void DrawSeg(ToolContext ctx, RasterSurface s, Point a, Point b)
+        {
+            var (outline, _, _) = Resolve(ctx);
+            s.DrawLine((int)a.X, (int)a.Y, (int)b.X, (int)b.Y, outline, Math.Max(1, ctx.PenSize));
+        }
+
+        internal static void FillPolygon(RasterSurface s, List<Point> pts, Color fill)
+        {
+            if (pts.Count < 3) return;
+            double minY = double.MaxValue, maxY = double.MinValue;
+            foreach (var p in pts) { minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y); }
+            for (int y = (int)minY; y <= (int)maxY; y++)
+            {
+                var xs = new List<double>();
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    var a = pts[i]; var b = pts[(i + 1) % pts.Count];
+                    if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y))
+                    {
+                        double t = (y - a.Y) / (b.Y - a.Y);
+                        xs.Add(a.X + t * (b.X - a.X));
+                    }
+                }
+                xs.Sort();
+                for (int i = 0; i + 1 < xs.Count; i += 2)
+                    for (int x = (int)xs[i]; x <= (int)xs[i + 1]; x++)
+                        s.SetPixel(x, y, fill);
+            }
+        }
+
+        public void Cancel(ToolContext ctx)
+        {
+            _active = false;
+            _points.Clear();
+            ctx.Canvas.ClearPreview();
+        }
+    }
+
+    /// <summary>Simplified curve tool: classic Paint's curve is a 2-stage line-bend interaction.
+    /// This implementation reproduces the workflow with a single control-point drag per stage,
+    /// rendered as a quadratic Bezier - a faithful approximation of the interaction, though the
+    /// exact cubic math of the original tool is simplified (documented deviation, see README).</summary>
+    public class CurveTool : ITool
+    {
+        public string Name => "Curve";
+        public string StatusHint => "Drag to draw a line, then drag it twice to bend it into a curve.";
+
+        // Three gestures, each a complete press-drag-release:
+        //   1. DrawingLine - drag out the straight baseline from _p0 to _p1.
+        //   2. Bend1       - drag anywhere to pull the first control point.
+        //   3. Bend2       - drag again for the second control point, then it commits.
+        private enum Stage { Idle, DrawingLine, AwaitBend1, Bending1, AwaitBend2, Bending2 }
+        private Stage _stage = Stage.Idle;
+
+        private Point _p0, _p1;   // baseline endpoints
+        private Point _c1, _c2;   // bezier control points
+        private MouseButton _button;
+
+        public void OnMouseDown(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            var pt = e.DocPointInt;
+            switch (_stage)
+            {
+                case Stage.Idle:
+                    if (ctx.Selection.HasSelection) ctx.Selection.Deselect(ctx.Document.Surface);
+                    ctx.Canvas.ShowSelection(null);
+                    _button = e.Button;
+                    _p0 = _p1 = pt;
+                    // Start both control points ON the baseline, so before any bend is applied the
+                    // curve is exactly the straight line - never a stale bend left over from the
+                    // previously drawn curve.
+                    _c1 = _c2 = pt;
+                    _stage = Stage.DrawingLine;
+                    break;
+
+                case Stage.AwaitBend1:
+                    // Seed the control point from where the press actually happened, rather than
+                    // from a remembered hover position. Relying on a remembered point was the bug
+                    // behind the curve snapping back toward its start: if the press landed
+                    // somewhere no MouseMove had reported yet, the bend used a stale coordinate
+                    // (often still the baseline's own start point) instead of where the user
+                    // actually pressed.
+                    _c1 = _c2 = pt;
+                    _stage = Stage.Bending1;
+                    Render(ctx);
+                    break;
+
+                case Stage.AwaitBend2:
+                    _c2 = pt;
+                    _stage = Stage.Bending2;
+                    Render(ctx);
+                    break;
+            }
+        }
+
+        public void OnMouseMove(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            var pt = e.DocPointInt;
+            switch (_stage)
+            {
+                case Stage.DrawingLine:
+                    _p1 = pt;
+                    // Keep the control points pinned to the baseline while it's still being drawn,
+                    // so the preview is a true straight line the whole time.
+                    _c1 = _c2 = Mid(_p0, _p1);
+                    Render(ctx);
+                    break;
+                case Stage.Bending1:
+                    // First bend drives both control points together, which gives the single
+                    // smooth arc you expect from the first drag.
+                    _c1 = _c2 = pt;
+                    Render(ctx);
+                    break;
+                case Stage.Bending2:
+                    // Second bend moves only the second control point, adding the S-curve.
+                    _c2 = pt;
+                    Render(ctx);
+                    break;
+            }
+        }
+
+        public void OnMouseUp(ToolContext ctx, CanvasMouseEventArgs e)
+        {
+            var pt = e.DocPointInt;
+            switch (_stage)
+            {
+                case Stage.DrawingLine:
+                    _p1 = pt;
+                    _c1 = _c2 = Mid(_p0, _p1);
+                    // A zero-length "line" is a stray click, not the start of a curve - reset
+                    // rather than stranding the tool mid-gesture waiting for bends.
+                    if ((int)_p0.X == (int)_p1.X && (int)_p0.Y == (int)_p1.Y)
+                    {
+                        _stage = Stage.Idle;
+                        ctx.Canvas.ClearPreview();
+                        return;
+                    }
+                    _stage = Stage.AwaitBend1;
+                    Render(ctx);
+                    break;
+
+                case Stage.Bending1:
+                    _c1 = _c2 = pt;
+                    _stage = Stage.AwaitBend2;
+                    Render(ctx);
+                    break;
+
+                case Stage.Bending2:
+                    _c2 = pt;
+                    Commit(ctx);
+                    _stage = Stage.Idle;
+                    break;
+            }
+        }
+
+        private static Point Mid(Point a, Point b) => new((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+
+        private void Render(ToolContext ctx)
+        {
+            ctx.Canvas.ClearPreview();
+            ctx.Canvas.PreviewSurface.Lock();
+            ctx.Canvas.PreviewSurface.AntiAlias = ctx.AntiAlias;
+            DrawCurve(ctx, ctx.Canvas.PreviewSurface);
+            ctx.Canvas.PreviewSurface.AntiAlias = false;
+            ctx.Canvas.PreviewSurface.Unlock();
+        }
+
+        private void Commit(ToolContext ctx)
+        {
+            ctx.Canvas.ClearPreview();
+            ctx.History.PushUndoState(ctx.Document, "Curve");
+            ctx.Document.Surface.Lock();
+            ctx.Document.Surface.AntiAlias = ctx.AntiAlias;
+            DrawCurve(ctx, ctx.Document.Surface);
+            ctx.Document.Surface.AntiAlias = false;
+            ctx.Document.Surface.Unlock();
+            ctx.Document.MarkDirty();
+        }
+
+        private void DrawCurve(ToolContext ctx, RasterSurface s)
+        {
+            var c = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
+            int size = Math.Max(1, ctx.PenSize);
+            Point prev = _p0;
+            const int steps = 64;
+            for (int i = 1; i <= steps; i++)
+            {
+                double t = (double)i / steps;
+                double mt = 1 - t;
+                double x = mt * mt * mt * _p0.X + 3 * mt * mt * t * _c1.X + 3 * mt * t * t * _c2.X + t * t * t * _p1.X;
+                double y = mt * mt * mt * _p0.Y + 3 * mt * mt * t * _c1.Y + 3 * mt * t * t * _c2.Y + t * t * t * _p1.Y;
+                var cur = new Point(x, y);
+                s.DrawLine((int)prev.X, (int)prev.Y, (int)cur.X, (int)cur.Y, c, size);
+                prev = cur;
+            }
+        }
+
+        public void Cancel(ToolContext ctx)
+        {
+            _stage = Stage.Idle;
+            ctx.Canvas.ClearPreview();
+        }
+    }
+}

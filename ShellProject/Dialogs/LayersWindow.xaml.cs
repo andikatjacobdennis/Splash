@@ -1,0 +1,115 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using PaintClone.Models;
+using PaintClone.Services;
+
+namespace PaintClone.Dialogs
+{
+    /// <summary>
+    /// Non-modal layers panel. Holds a PaintDocument reference that MainWindow re-points via
+    /// SetDocument whenever the document itself is replaced (File > New / Open create a brand new
+    /// PaintDocument object rather than mutating the existing one) - without this, the window would
+    /// silently keep editing an orphaned document after New/Open.
+    ///
+    /// Structural operations (add/delete/reorder/merge) push an undo state first, the same way
+    /// every drawing tool does before it mutates pixels - this is what makes those operations
+    /// undoable via Ctrl+Z, closing the "layer structure changes aren't part of undo/redo" gap.
+    /// Visibility toggling and simply selecting a different active layer are deliberately left out
+    /// of undo, since they're view state rather than a content change.
+    /// </summary>
+    public partial class LayersWindow : Window
+    {
+        private PaintDocument _document;
+        private readonly HistoryManager _history;
+
+        public LayersWindow(PaintDocument document, HistoryManager history)
+        {
+            InitializeComponent();
+            _document = document;
+            _history = history;
+            Refresh();
+        }
+
+        public void SetDocument(PaintDocument document)
+        {
+            _document = document;
+            Refresh();
+        }
+
+        public void Refresh()
+        {
+            LayersList.Items.Clear();
+            bool onlyOneLayer = _document.Layers.Count <= 1;
+
+            // Top-to-bottom in the list = front-to-back on the canvas, matching every other
+            // layers panel's convention (Document.Layers[last] is the frontmost layer).
+            for (int i = _document.Layers.Count - 1; i >= 0; i--)
+            {
+                int layerIndex = i; // capture for the closures below
+                var layer = _document.Layers[i];
+                bool isActive = i == _document.ActiveLayerIndex;
+
+                var row = new Border
+                {
+                    Padding = new Thickness(4, 3, 4, 3),
+                    Background = isActive ? new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0)) : Brushes.Transparent
+                };
+                var panel = new StackPanel { Orientation = Orientation.Horizontal };
+
+                var cb = new CheckBox { IsChecked = layer.Visible, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+                cb.Checked += (s, e) => _document.SetLayerVisible(layerIndex, true);
+                cb.Unchecked += (s, e) => _document.SetLayerVisible(layerIndex, false);
+
+                var text = new TextBlock { Text = layer.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = isActive ? FontWeights.Bold : FontWeights.Normal };
+
+                panel.Children.Add(cb);
+                panel.Children.Add(text);
+                row.Child = panel;
+                row.MouseLeftButtonDown += (s, e) =>
+                {
+                    if (e.OriginalSource is CheckBox) return; // let the checkbox handle its own click
+                    _document.ActiveLayerIndex = layerIndex;
+                    Refresh();
+                };
+
+                LayersList.Items.Add(new ListBoxItem { Content = row, Padding = new Thickness(0) });
+            }
+
+            DeleteBtn.IsEnabled = !onlyOneLayer;
+            MergeBtn.IsEnabled = _document.ActiveLayerIndex > 0;
+            UpBtn.IsEnabled = _document.ActiveLayerIndex < _document.Layers.Count - 1;
+            DownBtn.IsEnabled = _document.ActiveLayerIndex > 0;
+        }
+
+        private void AddLayer_Click(object sender, RoutedEventArgs e)
+        {
+            _history.PushUndoState(_document, "Add Layer");
+            _document.AddLayer();
+        }
+
+        private void DeleteLayer_Click(object sender, RoutedEventArgs e)
+        {
+            _history.PushUndoState(_document, "Delete Layer");
+            _document.DeleteLayer(_document.ActiveLayerIndex);
+        }
+
+        private void MoveUp_Click(object sender, RoutedEventArgs e)
+        {
+            _history.PushUndoState(_document, "Reorder Layers");
+            _document.MoveLayer(_document.ActiveLayerIndex, +1);
+        }
+
+        private void MoveDown_Click(object sender, RoutedEventArgs e)
+        {
+            _history.PushUndoState(_document, "Reorder Layers");
+            _document.MoveLayer(_document.ActiveLayerIndex, -1);
+        }
+
+        private void MergeDown_Click(object sender, RoutedEventArgs e)
+        {
+            _history.PushUndoState(_document, "Merge Layers");
+            _document.MergeDown(_document.ActiveLayerIndex);
+        }
+    }
+}

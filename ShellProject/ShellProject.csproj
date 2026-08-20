@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ShellProject</AssemblyName>
+    <RootNamespace>ShellProject</RootNamespace>
+    <Version>1.2.0</Version>
+    <NoWarn>CS0067;CS0414</NoWarn>
+    <ApplicationIcon>Resources\Mascot\mascot.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\Icons\*.png" />
+    <Resource Include="Resources\Cursors\*.cur" />
+    <Resource Include="Resources\Mascot\*.png" />
+    <Resource Include="Resources\Mascot\*.ico" />
+  </ItemGroup>
+
+</Project>

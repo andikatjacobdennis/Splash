@@ -1,0 +1,36 @@
+<Window x:Class="PaintClone.Dialogs.ShortcutManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Keyboard Shortcuts" Height="480" Width="420"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip" WindowStyle="ToolWindow"
+        Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
+        FontFamily="Tahoma" FontSize="11" Background="{StaticResource XpFace}"
+        ShowInTaskbar="False">
+    <DockPanel Margin="8">
+        <TextBlock DockPanel.Dock="Top" Text="Select an action, then click Change and press the new key combination." FontSize="9" Margin="0,0,0,6" TextWrapping="Wrap"/>
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button x:Name="ResetBtn" Content="Reset All to Defaults" Padding="8,3" Margin="0,0,6,0" Click="Reset_Click"/>
+            <Button Content="Close" Width="75" IsCancel="True"/>
+        </StackPanel>
+
+        <Border DockPanel.Dock="Bottom" Margin="0,6,0,6">
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="ChangeBtn" Content="Change..." Width="80" Padding="4,3" Margin="0,0,6,0" Click="Change_Click" IsEnabled="False"/>
+                <Button x:Name="ClearBtn" Content="Clear" Width="60" Padding="4,3" Margin="0,0,6,0" Click="Clear_Click" IsEnabled="False"/>
+                <TextBlock x:Name="StatusLabel" VerticalAlignment="Center" FontStyle="Italic" Foreground="#444"/>
+            </StackPanel>
+        </Border>
+
+        <Border BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Background="White">
+            <ListView x:Name="ShortcutList" BorderThickness="0" SelectionChanged="ShortcutList_SelectionChanged">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Action" Width="230" DisplayMemberBinding="{Binding DisplayName}"/>
+                        <GridViewColumn Header="Shortcut" Width="140" DisplayMemberBinding="{Binding BindingText}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Border>
+    </DockPanel>
+</Window>

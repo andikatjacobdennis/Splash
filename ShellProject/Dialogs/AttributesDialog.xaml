@@ -1,0 +1,75 @@
+<Window x:Class="PaintClone.Dialogs.AttributesDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Attributes" Height="330" Width="320"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
+        FontFamily="Tahoma" FontSize="11" Background="{StaticResource XpFace}"
+        ShowInTaskbar="False">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="File last saved: n/a" Margin="0,0,0,8"/>
+
+        <Border Grid.Row="1" BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Padding="8" Margin="0,0,0,8">
+            <StackPanel>
+                <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="70"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Width:" VerticalAlignment="Center"/>
+                    <TextBox x:Name="WidthBox" Grid.Column="1" Width="80" HorizontalAlignment="Left"/>
+                </Grid>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="70"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Height:" VerticalAlignment="Center"/>
+                    <TextBox x:Name="HeightBox" Grid.Column="1" Width="80" HorizontalAlignment="Left"/>
+                </Grid>
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="70"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Resolution:" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <TextBox x:Name="DpiBox" Width="60" TextChanged="Dpi_Changed"/>
+                        <TextBlock Text=" DPI" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+                <TextBlock x:Name="PrintSizeText" FontSize="9" Foreground="#555" Margin="0,5,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <GroupBox Grid.Row="2" Header="Units" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Margin="4">
+                <RadioButton x:Name="UnitsInches" Content="Inches" GroupName="units" Margin="0,0,10,0"/>
+                <RadioButton x:Name="UnitsCm" Content="Cm" GroupName="units" Margin="0,0,10,0"/>
+                <RadioButton x:Name="UnitsPixels" Content="Pixels" GroupName="units" IsChecked="True"/>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Grid.Row="3" Header="Colors" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Margin="4">
+                <RadioButton x:Name="ColorsBw" Content="Black and white" GroupName="colors" Margin="0,0,10,0"/>
+                <RadioButton x:Name="ColorsColor" Content="Colors" GroupName="colors" IsChecked="True"/>
+            </StackPanel>
+        </GroupBox>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK" Width="75" Margin="0,0,6,0" IsDefault="True" Click="Ok_Click"/>
+            <Button Content="Cancel" Width="75" Margin="0,0,6,0" IsCancel="True"/>
+            <Button Content="Clear" Width="75" Click="Clear_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

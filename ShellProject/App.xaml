@@ -1,0 +1,109 @@
+<Application x:Class="PaintClone.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+
+        <!-- XP "Classic" system colors -->
+        <SolidColorBrush x:Key="XpFace" Color="#ECE9D8"/>
+        <SolidColorBrush x:Key="XpFaceDark" Color="#D4D0C8"/>
+        <SolidColorBrush x:Key="XpBorder" Color="#808080"/>
+        <SolidColorBrush x:Key="XpBorderLight" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="XpBorderDarkShadow" Color="#404040"/>
+        <SolidColorBrush x:Key="XpMenuBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="XpSelection" Color="#316AC5"/>
+        <SolidColorBrush x:Key="XpTitleStart" Color="#0A246A"/>
+        <SolidColorBrush x:Key="XpTitleEnd" Color="#A6CAF0"/>
+
+        <Style TargetType="Menu">
+            <Setter Property="Background" Value="{StaticResource XpFace}"/>
+            <Setter Property="FontFamily" Value="Tahoma"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+
+        <Style TargetType="StatusBar">
+            <Setter Property="Background" Value="{StaticResource XpFace}"/>
+            <Setter Property="FontFamily" Value="Tahoma"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+
+        <!-- Classic beveled "well" border used throughout the toolbox / palette / status bar -->
+        <Style x:Key="SunkenPanel" TargetType="Border">
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="{StaticResource XpBorder}"/>
+            <Setter Property="Background" Value="{StaticResource XpFace}"/>
+        </Style>
+
+        <Style x:Key="ToolButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" BorderThickness="1" BorderBrush="Transparent" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource XpBorderDarkShadow}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#C8D6F0"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource XpBorder}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="OptionToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Margin" Value="1"/>
+            <Setter Property="FontSize" Value="9"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" BorderThickness="1" BorderBrush="{StaticResource XpBorder}" Background="{StaticResource XpFace}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource XpBorderDarkShadow}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#C8D6F0"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource XpBorderDarkShadow}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DrawingBrush x:Key="CheckerboardBrush" Viewport="0,0,8,8" ViewportUnits="Absolute" TileMode="Tile">
+            <DrawingBrush.Drawing>
+                <DrawingGroup>
+                    <GeometryDrawing Brush="White">
+                        <GeometryDrawing.Geometry>
+                            <RectangleGeometry Rect="0,0,8,8"/>
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                    <GeometryDrawing Brush="#CCCCCC">
+                        <GeometryDrawing.Geometry>
+                            <GeometryGroup>
+                                <RectangleGeometry Rect="0,0,4,4"/>
+                                <RectangleGeometry Rect="4,4,4,4"/>
+                            </GeometryGroup>
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                </DrawingGroup>
+            </DrawingBrush.Drawing>
+        </DrawingBrush>
+
+    </Application.Resources>
+</Application>
