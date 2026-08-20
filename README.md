@@ -13,6 +13,8 @@ available to verify every reference would have been a much riskier change for li
 practical benefit, since a project's file name and its internal namespace are
 independent in .NET and don't need to match.
 
+![Splash](Splash.png)
+
 ## Status
 
 This is a **real, from-scratch implementation** — a `WriteableBitmap`-backed raster
