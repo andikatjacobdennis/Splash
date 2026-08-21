@@ -7,20 +7,25 @@ using PaintClone.Services;
 namespace PaintClone.Dialogs
 {
     /// <summary>
-    /// Non-modal window (Photoshop-style History panel) listing every step in the undo/redo
+    /// Docked History panel (Photoshop-style), embedded directly in MainWindow's right-hand panel
+    /// dock rather than shown as a separate floating window. Lists every step in the undo/redo
     /// history in order, with the current step highlighted. Clicking any entry jumps straight to
-    /// it via HistoryManager.JumpTo. Stays open and live-updating while the user keeps drawing,
-    /// since it's shown with .Show() rather than .ShowDialog().
+    /// it via HistoryManager.JumpTo.
     /// </summary>
-    public partial class HistoryWindow : Window
+    public partial class HistoryPanel : UserControl
     {
-        private readonly HistoryManager _history;
-        private readonly Action<int> _onJumpRequested;
+        private HistoryManager _history;
+        private Action<int> _onJumpRequested;
         private bool _suppressSelection;
 
-        public HistoryWindow(HistoryManager history, Action<int> onJumpRequested)
+        public HistoryPanel()
         {
             InitializeComponent();
+        }
+
+        public void Initialize(HistoryManager history, Action<int> onJumpRequested)
+        {
+            if (_history != null) _history.StateChanged -= History_StateChanged;
             _history = history;
             _onJumpRequested = onJumpRequested;
             _history.StateChanged += History_StateChanged;
@@ -60,17 +65,11 @@ namespace PaintClone.Dialogs
 
             if (index == _history.CurrentIndex)
             {
-                MessageBox.Show(this, "The current step can't be deleted - undo or redo away from it first.",
+                MessageBox.Show(Window.GetWindow(this), "The current step can't be deleted - undo or redo away from it first.",
                     "History", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
             _history.DeleteEntry(index); // fires StateChanged, which refreshes this list automatically
-        }
-
-        protected override void OnClosed(EventArgs e)
-        {
-            _history.StateChanged -= History_StateChanged;
-            base.OnClosed(e);
         }
     }
 }

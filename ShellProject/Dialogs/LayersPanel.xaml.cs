@@ -7,10 +7,11 @@ using PaintClone.Services;
 namespace PaintClone.Dialogs
 {
     /// <summary>
-    /// Non-modal layers panel. Holds a PaintDocument reference that MainWindow re-points via
-    /// SetDocument whenever the document itself is replaced (File > New / Open create a brand new
-    /// PaintDocument object rather than mutating the existing one) - without this, the window would
-    /// silently keep editing an orphaned document after New/Open.
+    /// Docked Layers panel (Photoshop-style), embedded directly in MainWindow's right-hand panel
+    /// dock rather than shown as a separate floating window. Holds a PaintDocument reference that
+    /// MainWindow re-points via SetDocument whenever the document itself is replaced (File > New /
+    /// Open create a brand new PaintDocument object rather than mutating the existing one) - without
+    /// this, the panel would silently keep editing an orphaned document after New/Open.
     ///
     /// Structural operations (add/delete/reorder/merge) push an undo state first, the same way
     /// every drawing tool does before it mutates pixels - this is what makes those operations
@@ -18,27 +19,29 @@ namespace PaintClone.Dialogs
     /// Visibility toggling and simply selecting a different active layer are deliberately left out
     /// of undo, since they're view state rather than a content change.
     /// </summary>
-    public partial class LayersWindow : Window
+    public partial class LayersPanel : UserControl
     {
         private PaintDocument _document;
-        private readonly HistoryManager _history;
+        private HistoryManager _history;
 
-        public LayersWindow(PaintDocument document, HistoryManager history)
+        private static readonly SolidColorBrush ActiveRowBrush = new(Color.FromRgb(0x1F, 0x3A, 0x57));
+
+        public LayersPanel()
         {
             InitializeComponent();
-            _document = document;
-            _history = history;
-            Refresh();
         }
 
-        public void SetDocument(PaintDocument document)
+        public void SetDocument(PaintDocument document, HistoryManager history = null)
         {
             _document = document;
+            if (history != null) _history = history;
             Refresh();
         }
 
         public void Refresh()
         {
+            if (_document == null) return;
+
             LayersList.Items.Clear();
             bool onlyOneLayer = _document.Layers.Count <= 1;
 
@@ -53,7 +56,7 @@ namespace PaintClone.Dialogs
                 var row = new Border
                 {
                     Padding = new Thickness(4, 3, 4, 3),
-                    Background = isActive ? new SolidColorBrush(Color.FromRgb(0xC8, 0xD6, 0xF0)) : Brushes.Transparent
+                    Background = isActive ? ActiveRowBrush : Brushes.Transparent
                 };
                 var panel = new StackPanel { Orientation = Orientation.Horizontal };
 

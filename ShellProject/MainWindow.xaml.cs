@@ -68,6 +68,8 @@ namespace PaintClone
             _history.StateChanged += (s, e) => UpdateEditMenuState();
             _selection.Changed += (s, e) => { UpdateEditMenuState(); RefreshSelectionHandles(); };
 
+            HistoryPanelCtl.Initialize(_history, JumpToHistoryIndex);
+
             BuildTools();
             BuildPalette();
             UpdateColorSwatches();
@@ -442,16 +444,14 @@ namespace PaintClone
         // Document lifecycle
         // ===================================================================
 
-        private LayersWindow _layersWindow;
-
         private void WireDocumentLayerEvents()
         {
             _document.LayersChanged += (s, e) =>
             {
                 _canvas.RefreshLayers();
-                _layersWindow?.Refresh();
+                LayersPanelCtl.Refresh();
             };
-            _layersWindow?.SetDocument(_document); // the Layers window, if open, was pointing at the old document
+            LayersPanelCtl.SetDocument(_document, _history); // the Layers panel was pointing at the old document
         }
 
         private void NewDocument(int width, int height, bool promptSave = true)
@@ -2261,51 +2261,11 @@ namespace PaintClone
                 StatusText.Text = "Grid will appear once you zoom to 400% or higher.";
         }
 
-        private HistoryWindow _historyWindow;
+        private void ToggleHistoryWindow_Click(object sender, RoutedEventArgs e) =>
+            HistorySection.Visibility = MenuHistoryWindow.IsChecked ? Visibility.Visible : Visibility.Collapsed;
 
-        private void ToggleHistoryWindow_Click(object sender, RoutedEventArgs e)
-        {
-            if (MenuHistoryWindow.IsChecked)
-            {
-                if (_historyWindow == null)
-                {
-                    _historyWindow = new HistoryWindow(_history, JumpToHistoryIndex) { Owner = this };
-                    _historyWindow.Closed += (s, e2) =>
-                    {
-                        _historyWindow = null;
-                        MenuHistoryWindow.IsChecked = false;
-                    };
-                }
-                _historyWindow.Show();
-                _historyWindow.Activate();
-            }
-            else
-            {
-                _historyWindow?.Close();
-            }
-        }
-
-        private void ToggleLayersWindow_Click(object sender, RoutedEventArgs e)
-        {
-            if (MenuLayersWindow.IsChecked)
-            {
-                if (_layersWindow == null)
-                {
-                    _layersWindow = new LayersWindow(_document, _history) { Owner = this };
-                    _layersWindow.Closed += (s, e2) =>
-                    {
-                        _layersWindow = null;
-                        MenuLayersWindow.IsChecked = false;
-                    };
-                }
-                _layersWindow.Show();
-                _layersWindow.Activate();
-            }
-            else
-            {
-                _layersWindow?.Close();
-            }
-        }
+        private void ToggleLayersWindow_Click(object sender, RoutedEventArgs e) =>
+            LayersSection.Visibility = MenuLayersWindow.IsChecked ? Visibility.Visible : Visibility.Collapsed;
 
         private void ShortcutManager_Click(object sender, RoutedEventArgs e)
         {

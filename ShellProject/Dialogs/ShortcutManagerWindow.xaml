@@ -4,7 +4,7 @@
         Title="Keyboard Shortcuts" Height="480" Width="420"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip" WindowStyle="ToolWindow"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
-        FontFamily="Tahoma" FontSize="11" Background="{StaticResource XpFace}"
+        FontFamily="Segoe UI" FontSize="11" Background="{StaticResource XpFace}"
         ShowInTaskbar="False">
     <DockPanel Margin="8">
         <TextBlock DockPanel.Dock="Top" Text="Select an action, then click Change and press the new key combination." FontSize="9" Margin="0,0,0,6" TextWrapping="Wrap"/>
@@ -18,7 +18,7 @@
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="ChangeBtn" Content="Change..." Width="80" Padding="4,3" Margin="0,0,6,0" Click="Change_Click" IsEnabled="False"/>
                 <Button x:Name="ClearBtn" Content="Clear" Width="60" Padding="4,3" Margin="0,0,6,0" Click="Clear_Click" IsEnabled="False"/>
-                <TextBlock x:Name="StatusLabel" VerticalAlignment="Center" FontStyle="Italic" Foreground="#444"/>
+                <TextBlock x:Name="StatusLabel" VerticalAlignment="Center" FontStyle="Italic" Foreground="#B0B0B0"/>
             </StackPanel>
         </Border>
 

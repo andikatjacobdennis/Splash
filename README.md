@@ -12,9 +12,6 @@ name changed. Renaming 40+ files' internal namespace declarations without a comp
 available to verify every reference would have been a much riskier change for little
 practical benefit, since a project's file name and its internal namespace are
 independent in .NET and don't need to match.
-
-![Splash](Splash.png)
-
 ## Status
 
 This is a **real, from-scratch implementation** — a `WriteableBitmap`-backed raster
@@ -1244,6 +1241,43 @@ What that does **not** prove: type correctness, method resolution, XAML binding 
 the thing runs. Only a real `dotnet build` on Windows does that, which is what the
 `.github/workflows/build.yml` workflow is for - run it (or build locally) and the compiler's
 output will be far more useful than any further static review.
+
+### Forty-first round: a Photoshop-style UI
+
+Reskinned and restructured the shell from the classic Windows-XP-era Paint look to a dark,
+Photoshop-style creative-tool UI, on request. Two kinds of change, at different scope:
+
+- **App-wide dark theme** (`App.xaml`): every color the old "XP Classic" palette defined
+  (`XpFace`, `XpBorder`, etc.) was recolored to a dark charcoal palette rather than renamed, so
+  every window that already referenced `{StaticResource XpFace}` - every dialog, not just
+  `MainWindow` - re-themes automatically. New implicit (no-`x:Key`) styles for `Window`,
+  `TextBlock`, `Button`, `CheckBox`, `RadioButton`, `TextBox`, `ComboBox`, `ListBox`/`ListView`,
+  `TreeView`, `TabControl`, `GroupBox`, `Menu`/`MenuItem`, and a minimal flat `ScrollBar` template
+  mean plain, unstyled controls anywhere in the app pick up the dark look for free. A handful of
+  dialogs (`AboutDialog`, `AttributesDialog`, `IcoExportDialog`, `ShortcutManagerWindow`) had
+  hardcoded dark-gray/navy text (`#444`, `#0A246A`, ...) tuned for the old light background;
+  those specific `Foreground` values were brightened by hand since local values always win over
+  an implicit style, so the theme change alone couldn't fix them.
+- **MainWindow restructuring**: the tool options box moved from a vertical strip under the
+  toolbox into a horizontal, context-sensitive options bar docked under the menu (Photoshop's
+  layout) - `ToolOptionsPanel` is now a horizontal `StackPanel` in a horizontally-scrolling bar
+  rather than a vertical one in a sunken side panel; every `BuildToolOptions` call site was
+  already just appending a label followed by a `WrapPanel` per option group, so this needed no
+  C# changes at all, only the container's orientation. The 19-tool toolbox keeps its existing
+  icon-only buttons (it already had no text labels) but narrows to a 64px strip with FG/BG
+  color swatches moved to its bottom edge, matching where Photoshop puts them. The floating,
+  independently-shown **Layers** and **History** windows (`Dialogs/LayersWindow`,
+  `Dialogs/HistoryWindow`) were converted into `UserControl`s (`Dialogs/LayersPanel`,
+  `Dialogs/HistoryPanel`) permanently docked on the right alongside a new **Swatches** section
+  (the old horizontal palette bar, reflowed into a 10x10 grid), separated by `GridSplitter`s so
+  they resize like real docked panels instead of opening as separate top-level windows. The
+  View menu's Layers/History toggles now show or hide that docked section's `Visibility` instead
+  of opening/closing a `Window`.
+
+Verified with a real `dotnet build` (`net10.0-windows`, .NET 10 SDK) - it builds clean, and the
+resulting `ShellProject.exe` was launched and left running for several seconds with no unhandled
+XAML/binding exceptions before being closed, confirming the retemplated controls (menu, buttons,
+scrollbars, the two new docked panels) actually load rather than just parse.
 
 ## How to build
 

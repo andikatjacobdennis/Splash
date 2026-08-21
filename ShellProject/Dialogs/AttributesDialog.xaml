@@ -4,7 +4,7 @@
         Title="Attributes" Height="330" Width="320"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
-        FontFamily="Tahoma" FontSize="11" Background="{StaticResource XpFace}"
+        FontFamily="Segoe UI" FontSize="11" Background="{StaticResource XpFace}"
         ShowInTaskbar="False">
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -47,7 +47,7 @@
                         <TextBlock Text=" DPI" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Grid>
-                <TextBlock x:Name="PrintSizeText" FontSize="9" Foreground="#555" Margin="0,5,0,0"/>
+                <TextBlock x:Name="PrintSizeText" FontSize="9" Foreground="#AAAAAA" Margin="0,5,0,0"/>
             </StackPanel>
         </Border>
 
