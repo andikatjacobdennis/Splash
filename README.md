@@ -1279,6 +1279,209 @@ resulting `ShellProject.exe` was launched and left running for several seconds w
 XAML/binding exceptions before being closed, confirming the retemplated controls (menu, buttons,
 scrollbars, the two new docked panels) actually load rather than just parse.
 
+### Forty-second round: a real Light theme, and the contrast bugs a hand-recolor leaves behind
+
+Three follow-up requests: add a Light theme alongside Dark, fix the options-bar spacing, and fix
+text that had gone invisible in the dark theme.
+
+- **Light theme, switchable at runtime, not just a second hardcoded palette.** The previous round's
+  "theme" was really one fixed dark palette baked into `App.xaml`'s `Style` setters as
+  `{StaticResource XpFace}` etc. - a `StaticResource` reference resolves once, when its `Style` is
+  first loaded, and never again, so there was no way to add a second palette and let the user swap
+  between them at runtime without this rework. The fix: the 16 theme colors moved out of `App.xaml`
+  into two standalone dictionaries, `Themes/DarkTheme.xaml` and the new `Themes/LightTheme.xaml`
+  (same keys, light values - `PsContentBg` white instead of near-black, `PsAccentSoft` a pale blue
+  instead of a dark navy, etc.), and every reference to one of those 16 keys - in `App.xaml`'s
+  styles/templates *and* in `MainWindow.xaml` and every dialog - changed from `StaticResource` to
+  `DynamicResource`, which *does* re-resolve live. `Services/ThemeManager.cs` swaps which dictionary
+  sits at `Application.Resources.MergedDictionaries[0]`; because everything downstream is a
+  `DynamicResource`, that one swap instantly re-paints every open window. `Services/ThemeStore.cs`
+  persists the choice to `%AppData%\PaintClone\theme.txt` (same pattern as `CustomColorStore`), and
+  `App.OnStartup` applies the saved theme *before* `MainWindow` is constructed so there's no
+  flash of the wrong theme on launch. A new View > Theme submenu (Dark/Light, behaving like a radio
+  pair) drives it.
+- **The options bar's label/button spacing** was a leftover bug from the previous round: flipping
+  `ToolOptionsPanel` from a vertical `StackPanel` to a horizontal one changed the layout direction
+  but not the margins each label/group was built with, which were still vertical-stacking values
+  (e.g. a top margin meant to space one row from the row above it) - in a horizontal bar these did
+  nothing useful, leaving labels and button groups jammed together with no vertical centering.
+  Replaced the scattered inline `Margin`/`Add` calls with two small helpers, `AddOptionLabel` and
+  `AddOptionGroup`, that vertically center each piece and give it a consistent trailing gap - now
+  the single place that spacing is decided, instead of copy-pasted across ten call sites. Also
+  widened the toolbox strip (64px to 72px, its two-column math wasn't quite big enough for the
+  30px buttons plus their margin) and the right-hand dock (216px to 224px) for breathing room.
+- **Invisible text in the dark theme** turned out to be exactly the failure mode you'd expect from
+  hand-picking colors against one specific background: several `Foreground` values had been chosen
+  to work on the *old light* background and were never revisited when that background went dark,
+  and one new control template was never themed at all.
+  - `Dialogs/EditColorsDialog.xaml.cs`'s "Standards" tab builds its section notes as plain
+    `TextBlock`s with `Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66))` - a
+    medium-dark gray, sitting directly on the dialog's now-dark background instead of on the white
+    it was tuned for. Switched both to `SetResourceReference(TextBlock.ForegroundProperty,
+    "PsTextDim")`, the code-behind equivalent of `DynamicResource`, so they track the active theme
+    like everything else instead of being frozen at whatever color was chosen for the old skin.
+  - That same tab uses `Expander` for each collapsible color-standard section, and `App.xaml` had
+    never given `Expander` a style at all - it was rendering with WPF's default light-theme chrome
+    (a near-black header foreground with no explicit background) sitting on the new dark dialog,
+    making every section header ("RAL Classic (215)", etc.) effectively unreadable. Added a real
+    `Expander` template (toggle-button header with a rotating disclosure arrow, themed content
+    border) matching the rest of the dark-theme control set.
+  - `Dialogs/LayersPanel.xaml.cs` highlighted the active layer's row with a hardcoded
+    `SolidColorBrush(Color.FromRgb(0x1F, 0x3A, 0x57))` - a dark navy chosen for the dark theme,
+    which would sit behind dark theme-appropriate text in Light mode too (dark-on-dark). Replaced
+    with `row.SetResourceReference(Border.BackgroundProperty, "PsAccentSoft")`, so the highlight is
+    whichever accent tint the active theme defines.
+  - A handful of dialogs (`AboutDialog`, `AttributesDialog`, `IcoExportDialog`,
+    `ShortcutManagerWindow`) had their previous-round contrast fixes hand-picked as fixed hex
+    values (`#AAAAAA`, `#6FB1FC`, ...) rather than theme resources - technically readable in Dark,
+    but wrong once Light theme existed (light gray on a light background). Switched all of them to
+    `{DynamicResource PsTextDim}` / `{DynamicResource PsAccent}` so they track whichever theme is
+    active instead of being correct for exactly one.
+
+Re-verified with a clean `dotnet build` and by launching `ShellProject.exe` under each theme in
+turn (forcing `theme.txt` to `Dark` then `Light` and confirming both start up and keep running with
+no exceptions) before resetting it back to the default.
+
+### Forty-third round: the menu bar was sizing "File" and "Colors" the same
+
+Every top-level menu-bar entry (File, Edit, View, ...) was rendering noticeably wider than its text
+needed - closer to fixed-width boxes than a normal Windows menu bar, where "File" is narrow and
+"Keyboard Shortcuts..." is wide, each sized to its own content.
+
+The cause was the single `MenuItem` `ControlTemplate` added two rounds ago being reused, unchanged,
+for both dropdown entries *and* the top-level menu bar itself. That template reserves a fixed 18px
+checkmark gutter and 14px submenu-arrow column - real estate a dropdown entry legitimately needs
+(so checkmarks and arrows line up down the column) but that a top-level "File"/"Edit" header never
+uses. The one existing `Role="TopLevelHeader"` trigger only adjusted `Padding`; it never touched
+those two reserved columns, so every top-level item silently carried ~32px of unused gutter baked
+around its text, making them all look bloated and suspiciously similar in width regardless of the
+label.
+
+Fixed by giving the menu bar its own, much simpler template (`TopLevelMenuItemTemplate` in
+`App.xaml`) - just a header and its dropdown `Popup`, no checkmark/arrow columns at all - and
+swapping to it via a `Style.Triggers` `Role` check (`TopLevelHeader` for entries with a dropdown,
+`TopLevelItem` for the empty case - "Plugins" before any plugin loads into it, which otherwise would
+have kept the old bloated look while every other top-level entry was fixed). The full
+checkmark/arrow template stays exactly as it was for actual dropdown entries, where that gutter is
+correct.
+
+### Forty-fourth round: a translucent gradient erased what was under it once committed
+
+Reported behaviour: dragging the Gradient tool, whatever was already drawn stayed visible through
+the translucent part of the gradient while still rubber-banding it - but the instant the mouse was
+released, that same area went solid, hiding the earlier drawing instead of blending over it.
+
+Root cause was `RasterSurface.SetPixel`: by design (see its own comment - "we treat colors as
+fully opaque almost everywhere, which matches classic Paint's no-alpha-compositing model") it does
+a raw store, overwriting whatever ARGB value was already at that pixel rather than blending the
+new colour over it. `GradientTool.DrawPreview` calls this once per pixel with the same math on two
+different occasions: every `MouseMove`, into `Canvas.PreviewSurface` (a separate overlay bitmap
+that `ClearPreview()` resets to fully transparent before each redraw), and once more on `MouseUp`,
+straight into the real, non-empty layer bitmap (`Document.Surface`, since `GradientTool` commits
+immediately rather than going through the movable pending-shape flow other shape tools use).
+
+Both calls compute the identical translucent colour, but "overwrite" only behaves like "blend"
+when the destination started out transparent - true for the preview surface every single frame,
+never true for the real layer once anything has been drawn on it. So the live preview's
+correct-looking blend was an accident of always painting onto a blank surface: WPF's own layered
+rendering (the preview image sits on top of the real layer image) supplied the actual
+blend-with-what's-underneath effect for free, and nothing in the code was actually compositing
+anything. The moment the same pixels landed in the real, non-blank layer via that same raw store,
+whatever was already there - drawn in an earlier stroke, on the very layer being painted into now -
+was simply replaced, not blended under.
+
+Fixed by making `GradientTool.DrawPreview` alpha-composite over the existing pixel instead of
+overwriting it - see the next round for the primitive actually used and why the first version of
+this fix immediately caused its own (performance) bug.
+
+### Forty-fifth round: fixing the gradient fix introduced a stutter
+
+The previous round's fix used every pixel write's *coverage-general* correctness but paid for it
+on every single `MouseMove`, not just on commit - and it turned out `RasterSurface` already had the
+right tool for the job sitting unused right next to it.
+
+The first attempt added a new `RasterSurface.BlendPixel(x, y, color)` that read the destination
+pixel via `GetPixel` and blended over it, and had `GradientTool.DrawPreview` call it unconditionally
+- during the live rubber-band drag as well as on commit. That fixed the reported bug (translucent
+gradient pixels no longer erased whatever was drawn under them once committed) but introduced a
+new one: every mouse-move now paid for a `GetPixel` read plus the blend math on every pixel of the
+dragged box, even though - as the fix's own reasoning already established - blending onto the
+preview surface is mathematically identical to just storing, since it's always cleared fully
+transparent before each redraw. That's pure wasted work on the hottest, most frequently-repeated
+path in the tool, and it showed up exactly as reported: a stutter/flicker while dragging.
+
+Two changes:
+- `RasterSurface` already had a general-purpose blend primitive, `BlendPixel(x, y, color,
+  coverage)` (added earlier for anti-aliased line edges), using the lock-assumed, bounds-unchecked
+  `ReadRawUnpremultiplied` rather than the public `GetPixel`'s extra lock-state branch - a better
+  fit than the redundant one just added. The new 3-argument `BlendPixel` overload was deleted in
+  favor of calling the existing one with `coverage: 1.0`.
+- Added `RasterSurface.Blend` - a plain bool, off by default, following the exact pattern already
+  established by `AntiAlias` (a mode flag the caller sets immediately before drawing rather than a
+  parameter threaded through every method). `GradientTool.DrawPreview` now branches on it: `Blend`
+  off (the default, and what the live preview uses) calls `SetPixel` directly, exactly as before
+  either fix; `Blend` on - switched on only for the one commit call in
+  `DragShapeToolBase.OnMouseUp`, then back off immediately after, mirroring how `AntiAlias` is
+  already toggled there - calls `BlendPixel`. No other tool's `DrawPreview` override ever reads
+  `Blend`, so turning it on for that shared commit path (reachable by any drag-shape tool on a
+  zero-area click, not just Gradient) has no effect on anything but Gradient's own translucent
+  pixels.
+
+The net result is the same fix as the previous round, at the original per-pixel cost during the
+drag - the extra read-and-blend work now happens exactly once, at commit, instead of on every
+mouse-move.
+
+### Forty-sixth round: tool icons losing contrast against both themes
+
+The 20 toolbox icons (`Resources/Icons/*.png`) are colour flat-art, not simple recolourable
+silhouettes - each one is a dark navy outline around a pale interior fill (see e.g. the ellipse or
+rectangle glyph), drawn assuming it would sit on a light, roughly-white backdrop. Once the toolbox
+itself could be either a dark charcoal panel or a light gray one, both halves of that assumption
+broke on one theme each: the dark navy outline nearly disappears against the dark theme's panel
+colour, and the pale fill nearly disappears against the light theme's - a different half of every
+icon going illegible depending on which theme happened to be active, which is exactly what made it
+easy to miss in the previous rounds' testing (whichever theme was being eyeballed at the time still
+looked *mostly* fine).
+
+Recoloring the source art per-theme wasn't practical here - these are baked colour PNGs, not
+single-colour glyphs an OpacityMask could retint - so the fix instead gives every icon a small,
+constant near-white "card" behind it (`ToolButtonStyle` in `App.xaml`), independent of which theme
+is active, restoring the light backdrop the artwork actually needs regardless of what the
+surrounding panel is doing. Deliberately a fixed color rather than a `DynamicResource`: the whole
+point is that it *doesn't* track the theme.
+
+That card sits behind `MakeToolIcon`'s fallback path too (a plain text abbreviation like "PEN",
+used if a given tool's icon file were ever missing) - its `TextBlock` was relying on the
+theme-following default text colour, which would have made it unreadable against the new constant
+light card specifically in the dark theme (light-on-near-white). Gave it an explicit dark
+foreground instead, for the same "this card doesn't change with the theme" reason.
+
+### Forty-seventh round: a missing binding, not a missing colour, and preset sizes in Attributes
+
+Two requests: fix a genuine "no contrast" report in Edit Colors' Standards tab, and let Attributes
+offer the same built-in size list New Picture does instead of only free-typed Width/Height.
+
+- **Edit Colors > Standards header text.** What looked like a contrast problem was actually a
+  missing `Content` binding in the `Expander` template added two rounds ago: the section header is
+  a `ToggleButton` with its *own* nested `ControlTemplate`, and that inner template's
+  `ContentPresenter` read `{TemplateBinding Content}` - correctly, but that resolves against the
+  `ToggleButton`'s own `Content` property, not the outer `Expander`'s `Header`. Nothing in the outer
+  template ever set the `ToggleButton`'s `Content` to `{TemplateBinding Header}`, so every section
+  title ("RAL Classic (215)", "CSS / X11 named colors", ...) was silently never rendered at all -
+  just the disclosure arrow, which reads as "the text has no contrast" from the outside even though
+  there was no text there to have a colour problem in the first place. One missing attribute
+  (`Content="{TemplateBinding Header}"` on the `ToggleButton`) fixes it.
+- **Attributes > preset sizes.** New Picture's built-in size list (Default, VGA, SVGA, ... US
+  Letter) lived as a private field on `NewDocumentDialog` itself, so `AttributesDialog` had no way
+  to reuse it. Promoted it to `CanvasSizePresetStore.BuiltIn` - a single shared source both dialogs
+  now read from, so they can never quietly drift into offering different lists - and gave
+  `AttributesDialog` a new "Preset:" `ComboBox` above Width/Height, offering that same built-in list
+  plus whatever custom sizes the user has saved from New Picture. Picking a preset fills in
+  Width/Height (like New Picture's list already did); typing a size by hand drops the combo back to
+  "Custom size" rather than leave a stale preset name showing next to numbers that no longer match
+  it - same UX contract as New Picture, reimplemented for a `ComboBox` instead of a `ListBox` since
+  Attributes is a much smaller dialog.
+
 ## How to build
 
 Requires Windows + .NET 10 SDK (WPF is Windows-only; this will not build on Linux/macOS).

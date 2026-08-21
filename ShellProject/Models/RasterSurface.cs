@@ -378,6 +378,17 @@ namespace PaintClone.Models
         /// to reset.</summary>
         public bool AntiAlias { get; set; }
 
+        /// <summary>When true, a tool that draws translucent pixels (currently just the Gradient
+        /// tool, via <see cref="BlendPixel(int,int,Color,double)"/>) should alpha-composite over
+        /// whatever's already stored at each pixel instead of overwriting it outright - otherwise a
+        /// translucent draw erases earlier content instead of blending over it. Left off by default
+        /// and switched on only right before a *commit* into the real, non-empty layer: the live
+        /// preview surface is always freshly cleared to transparent before every redraw, where
+        /// blending and overwriting are mathematically identical, so leaving it off there avoids
+        /// paying for a redundant per-pixel read-and-blend on every single mouse-move (which was
+        /// visible as a stutter/flicker once the gradient preview turned it on unconditionally).</summary>
+        public bool Blend { get; set; }
+
         /// <summary>Writes a colour over the existing pixel with the given coverage (0..1). Unlike
         /// SetPixel, which hard-overwrites, this blends - which is what makes a partially covered
         /// edge pixel look like a smooth edge rather than a lighter dot on a hard one.</summary>

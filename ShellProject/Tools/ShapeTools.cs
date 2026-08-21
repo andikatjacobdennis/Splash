@@ -117,7 +117,12 @@ namespace PaintClone.Tools
             ctx.History.PushUndoState(ctx.Document, Name);
             ctx.Document.Surface.Lock();
             ctx.Document.Surface.AntiAlias = ctx.AntiAlias;
+            // Only GradientTool's DrawPreview ever consults this (every other override writes
+            // pixels directly), so turning it on unconditionally here is harmless for every other
+            // shape tool that can reach this same direct-commit path via a zero-area click.
+            ctx.Document.Surface.Blend = true;
             DrawPreview(ctx, _start, end, ctx.Document.Surface);
+            ctx.Document.Surface.Blend = false;
             ctx.Document.Surface.AntiAlias = false;
             ctx.Document.Surface.Unlock();
             ctx.Document.MarkDirty();
@@ -412,11 +417,23 @@ namespace PaintClone.Tools
                         t = Math.Max(0, Math.Min(1, t + noise / 255.0));
                     }
 
-                    surface.SetPixel(x, y, Color.FromArgb(
+                    var color = Color.FromArgb(
                         (byte)Math.Round(from.A + (to.A - from.A) * t),
                         (byte)Math.Round(from.R + (to.R - from.R) * t),
                         (byte)Math.Round(from.G + (to.G - from.G) * t),
-                        (byte)Math.Round(from.B + (to.B - from.B) * t)));
+                        (byte)Math.Round(from.B + (to.B - from.B) * t));
+
+                    // A translucent gradient (either endpoint colour carrying alpha < 255,
+                    // including the default transparent Background) must blend into whatever is
+                    // already drawn there on commit, rather than erase it - a plain SetPixel would
+                    // overwrite, not blend. surface.Blend is only ever turned on for that commit
+                    // (see DragShapeToolBase.OnMouseUp): during the live rubber-band preview it's
+                    // off, and SetPixel is used directly, because the preview surface starts every
+                    // single redraw fully transparent - blending onto that is mathematically
+                    // identical to just storing, so doing the extra per-pixel read-and-blend on
+                    // every mouse-move bought nothing but a visible stutter.
+                    if (surface.Blend) surface.BlendPixel(x, y, color, 1.0);
+                    else surface.SetPixel(x, y, color);
                 }
             }
         }

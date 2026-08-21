@@ -6,7 +6,7 @@
         MinHeight="640" MinWidth="820"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
         FontFamily="Segoe UI" FontSize="11"
-        Background="{StaticResource XpTitleStart}"
+        Background="{DynamicResource XpTitleStart}"
         Closing="Window_Closing">
     <Grid>
     <DockPanel LastChildFill="True">
@@ -54,6 +54,11 @@
                 <Separator/>
                 <MenuItem x:Name="MenuHistoryWindow" Header="_History Panel" IsCheckable="True" IsChecked="True" Click="ToggleHistoryWindow_Click"/>
                 <MenuItem x:Name="MenuLayersWindow" Header="_Layers Panel" IsCheckable="True" IsChecked="True" Click="ToggleLayersWindow_Click"/>
+                <Separator/>
+                <MenuItem Header="_Theme">
+                    <MenuItem x:Name="MenuThemeDark" Header="_Dark" IsCheckable="True" IsChecked="True" Click="ThemeDark_Click"/>
+                    <MenuItem x:Name="MenuThemeLight" Header="_Light" IsCheckable="True" Click="ThemeLight_Click"/>
+                </MenuItem>
                 <Separator/>
                 <MenuItem Header="_Keyboard Shortcuts..." Click="ShortcutManager_Click"/>
             </MenuItem>
@@ -120,9 +125,9 @@
         </StatusBar>
 
         <!-- ===================== OPTIONS BAR (context-sensitive, per current tool) ===================== -->
-        <Border DockPanel.Dock="Top" Background="{StaticResource XpMenuBg}" BorderBrush="{StaticResource XpBorder}"
-                BorderThickness="0,0,0,1" Height="40">
-            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="6,0">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource XpMenuBg}" BorderBrush="{DynamicResource XpBorder}"
+                BorderThickness="0,0,0,1" Height="44">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="10,0">
                 <StackPanel x:Name="ToolOptionsPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
             </ScrollViewer>
         </Border>
@@ -133,37 +138,37 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="216"/>
+                <ColumnDefinition Width="224"/>
             </Grid.ColumnDefinitions>
 
             <!-- ===================== TOOL STRIP (icon-only, Photoshop-style) ===================== -->
-            <Border x:Name="ToolboxPanel" Grid.Column="0" Style="{StaticResource SunkenPanel}" Width="64" BorderThickness="0,0,1,0">
+            <Border x:Name="ToolboxPanel" Grid.Column="0" Style="{StaticResource SunkenPanel}" Width="72" BorderThickness="0,0,1,0">
                 <DockPanel LastChildFill="False">
-                    <UniformGrid x:Name="ToolGrid" DockPanel.Dock="Top" Columns="2" Rows="10" Margin="2,4"/>
+                    <UniformGrid x:Name="ToolGrid" DockPanel.Dock="Top" Columns="2" Rows="10" Margin="2,6"/>
 
                     <!-- Foreground/background color indicator, Photoshop's overlapping swatches -->
                     <Grid DockPanel.Dock="Bottom" Width="46" Height="46" Margin="0,4,0,10" HorizontalAlignment="Center">
                         <Border x:Name="BgSwatch" Width="26" Height="26" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                BorderBrush="{StaticResource XpBorderLight}" BorderThickness="1" Background="White"
+                                BorderBrush="{DynamicResource XpBorderLight}" BorderThickness="1" Background="White"
                                 MouseLeftButtonDown="BgSwatch_Click" MouseRightButtonDown="BgSwatch_RightClick"
                                 ToolTip="Background color"/>
                         <Border x:Name="FgSwatch" Width="26" Height="26" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                BorderBrush="{StaticResource XpBorderLight}" BorderThickness="1" Background="Black"
+                                BorderBrush="{DynamicResource XpBorderLight}" BorderThickness="1" Background="Black"
                                 MouseLeftButtonDown="FgSwatch_Click" MouseRightButtonDown="FgSwatch_RightClick"
                                 ToolTip="Foreground color"/>
                     </Grid>
                     <Border x:Name="TransparentSwatch" DockPanel.Dock="Bottom" Width="24" Height="24" Margin="0,0,0,8" HorizontalAlignment="Center"
-                            BorderBrush="{StaticResource XpBorderLight}" BorderThickness="1" Background="{StaticResource CheckerboardBrush}"
+                            BorderBrush="{DynamicResource XpBorderLight}" BorderThickness="1" Background="{StaticResource CheckerboardBrush}"
                             Cursor="Hand" ToolTip="Transparent - left-click sets foreground, right-click sets background"
                             MouseLeftButtonDown="TransparentSwatch_Click" MouseRightButtonDown="TransparentSwatch_RightClick"/>
                 </DockPanel>
             </Border>
 
             <!-- ===================== CANVAS ===================== -->
-            <Border Grid.Column="1" Background="{StaticResource PsCanvasSurround}">
+            <Border Grid.Column="1" Background="{DynamicResource PsCanvasSurround}">
                 <ScrollViewer x:Name="CanvasScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                              Background="{StaticResource PsCanvasSurround}">
-                    <Grid Background="{StaticResource PsCanvasSurround}">
+                              Background="{DynamicResource PsCanvasSurround}">
+                    <Grid Background="{DynamicResource PsCanvasSurround}">
                         <Border x:Name="CanvasHost" Background="{StaticResource CheckerboardBrush}" BorderBrush="Black" BorderThickness="1"
                                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6">
                             <Grid x:Name="CanvasStack">
@@ -183,10 +188,10 @@
             </Border>
 
             <GridSplitter Grid.Column="2" Width="4" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                           Background="{StaticResource XpBorder}"/>
+                           Background="{DynamicResource XpBorder}"/>
 
             <!-- ===================== DOCKED PANELS (Swatches / Layers / History) ===================== -->
-            <Grid x:Name="RightDock" Grid.Column="3" Background="{StaticResource XpFace}">
+            <Grid x:Name="RightDock" Grid.Column="3" Background="{DynamicResource XpFace}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -219,7 +224,7 @@
                 </Border>
 
                 <GridSplitter Grid.Row="3" Height="4" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                               Background="{StaticResource XpBorder}"/>
+                               Background="{DynamicResource XpBorder}"/>
 
                 <!-- History panel -->
                 <Border x:Name="HistorySection" Grid.Row="4">

@@ -11,8 +11,8 @@
             <Button x:Name="MergeBtn" Content="Merge" Width="44" Click="MergeDown_Click" ToolTip="Merge down into the layer below"/>
         </StackPanel>
         <TextBlock DockPanel.Dock="Top" Text="Click a layer to make it active. Checkbox toggles visibility."
-                   FontSize="9" Foreground="{StaticResource PsTextDim}" Margin="2,4,0,4" TextWrapping="Wrap"/>
-        <Border BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Background="{StaticResource PsContentBg}">
+                   FontSize="9" Foreground="{DynamicResource PsTextDim}" Margin="2,4,0,4" TextWrapping="Wrap"/>
+        <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="{DynamicResource PsContentBg}">
             <ListBox x:Name="LayersList" BorderThickness="0" Background="Transparent"/>
         </Border>
     </DockPanel>

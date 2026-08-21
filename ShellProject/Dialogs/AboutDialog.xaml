@@ -4,7 +4,7 @@
         Title="About Splash" Height="380" Width="450"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" WindowStyle="ToolWindow"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
-        FontFamily="Segoe UI" FontSize="11" Background="{StaticResource XpFace}"
+        FontFamily="Segoe UI" FontSize="11" Background="{DynamicResource XpFace}"
         ShowInTaskbar="False">
     <Grid Margin="18">
         <Grid.RowDefinitions>
@@ -29,14 +29,14 @@
                     CornerRadius="6" Padding="6,4" Margin="0,4,0,0" Visibility="Collapsed" MaxWidth="120">
                 <TextBlock x:Name="SpeechText" TextWrapping="Wrap" FontSize="9" TextAlignment="Center"/>
             </Border>
-            <TextBlock x:Name="MascotNameText" HorizontalAlignment="Center" FontSize="9" FontStyle="Italic" Foreground="#AAAAAA" Margin="0,2,0,0"/>
+            <TextBlock x:Name="MascotNameText" HorizontalAlignment="Center" FontSize="9" FontStyle="Italic" Foreground="{DynamicResource PsTextDim}" Margin="0,2,0,0"/>
         </StackPanel>
 
         <StackPanel Grid.Row="0" Grid.Column="1">
-            <TextBlock Text="Splash" FontSize="26" FontWeight="Bold" Foreground="#6FB1FC" Margin="0,0,0,2"/>
-            <TextBlock x:Name="TaglineText" FontSize="11" Foreground="#B0B0B0" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <TextBlock Text="Splash" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource PsAccent}" Margin="0,0,0,2"/>
+            <TextBlock x:Name="TaglineText" FontSize="11" Foreground="{DynamicResource PsTextDim}" Margin="0,0,0,8" TextWrapping="Wrap"/>
 
-            <Border Background="White" BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Padding="8,6" Margin="0,0,0,10">
+            <Border Background="White" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Padding="8,6" Margin="0,0,0,10">
                 <TextBlock x:Name="FunFactText" FontStyle="Italic" TextWrapping="Wrap" FontSize="10" Foreground="#333"/>
             </Border>
 
@@ -59,7 +59,7 @@
             </Grid>
         </StackPanel>
 
-        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" TextWrapping="Wrap" FontSize="9" Foreground="#999999"
+        <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" TextWrapping="Wrap" FontSize="9" Foreground="{DynamicResource PsTextDim}"
                    Margin="0,14,0,0"
                    Text="This is an independent, unofficial project inspired by classic early-2000s paint programs. It is not affiliated with, endorsed by, or a product of any software vendor."/>
 

@@ -16,6 +16,23 @@ namespace PaintClone.Services
     /// same simple way as the custom/recent color stores.</summary>
     public static class CanvasSizePresetStore
     {
+        /// <summary>The fixed, non-persisted size choices offered everywhere a canvas size is
+        /// picked from a list (New Picture, Attributes) - one shared table so the two dialogs can
+        /// never drift into offering different built-in sizes.</summary>
+        public static readonly List<SizePreset> BuiltIn = new()
+        {
+            new SizePreset { Name = "Default", Width = 480, Height = 360 },
+            new SizePreset { Name = "Small", Width = 320, Height = 240 },
+            new SizePreset { Name = "VGA", Width = 640, Height = 480 },
+            new SizePreset { Name = "SVGA", Width = 800, Height = 600 },
+            new SizePreset { Name = "XGA", Width = 1024, Height = 768 },
+            new SizePreset { Name = "HD 720p", Width = 1280, Height = 720 },
+            new SizePreset { Name = "Full HD 1080p", Width = 1920, Height = 1080 },
+            new SizePreset { Name = "Square / Social Post", Width = 1080, Height = 1080 },
+            new SizePreset { Name = "A4 @ 96 DPI", Width = 794, Height = 1123 },
+            new SizePreset { Name = "US Letter @ 96 DPI", Width = 816, Height = 1056 },
+        };
+
         private static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "PaintClone", "sizepresets.txt");

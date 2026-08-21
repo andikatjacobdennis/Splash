@@ -10,19 +10,9 @@ namespace PaintClone.Dialogs
         public int ResultWidth { get; private set; }
         public int ResultHeight { get; private set; }
 
-        private static readonly List<SizePreset> BuiltIn = new()
-        {
-            new SizePreset { Name = "Default", Width = 480, Height = 360 },
-            new SizePreset { Name = "Small", Width = 320, Height = 240 },
-            new SizePreset { Name = "VGA", Width = 640, Height = 480 },
-            new SizePreset { Name = "SVGA", Width = 800, Height = 600 },
-            new SizePreset { Name = "XGA", Width = 1024, Height = 768 },
-            new SizePreset { Name = "HD 720p", Width = 1280, Height = 720 },
-            new SizePreset { Name = "Full HD 1080p", Width = 1920, Height = 1080 },
-            new SizePreset { Name = "Square / Social Post", Width = 1080, Height = 1080 },
-            new SizePreset { Name = "A4 @ 96 DPI", Width = 794, Height = 1123 },
-            new SizePreset { Name = "US Letter @ 96 DPI", Width = 816, Height = 1056 },
-        };
+        // Built-in sizes live in CanvasSizePresetStore.BuiltIn now - shared with AttributesDialog,
+        // which offers the same list for resizing an existing picture.
+        private static List<SizePreset> BuiltIn => CanvasSizePresetStore.BuiltIn;
 
         private readonly List<SizePreset> _customPresets;
         private bool _suppress;

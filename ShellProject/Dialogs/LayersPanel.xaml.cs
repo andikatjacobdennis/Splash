@@ -24,8 +24,6 @@ namespace PaintClone.Dialogs
         private PaintDocument _document;
         private HistoryManager _history;
 
-        private static readonly SolidColorBrush ActiveRowBrush = new(Color.FromRgb(0x1F, 0x3A, 0x57));
-
         public LayersPanel()
         {
             InitializeComponent();
@@ -53,11 +51,9 @@ namespace PaintClone.Dialogs
                 var layer = _document.Layers[i];
                 bool isActive = i == _document.ActiveLayerIndex;
 
-                var row = new Border
-                {
-                    Padding = new Thickness(4, 3, 4, 3),
-                    Background = isActive ? ActiveRowBrush : Brushes.Transparent
-                };
+                var row = new Border { Padding = new Thickness(4, 3, 4, 3) };
+                if (isActive) row.SetResourceReference(Border.BackgroundProperty, "PsAccentSoft");
+                else row.Background = Brushes.Transparent;
                 var panel = new StackPanel { Orientation = Orientation.Horizontal };
 
                 var cb = new CheckBox { IsChecked = layer.Visible, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };

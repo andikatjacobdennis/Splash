@@ -342,14 +342,15 @@ namespace PaintClone.Dialogs
 
                 var body = new StackPanel { Margin = new Thickness(2, 4, 2, 8) };
                 body.Children.Add(grid);
-                body.Children.Add(new TextBlock
+                var note = new TextBlock
                 {
                     Text = section.Note,
                     FontSize = 8,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(0, 4, 0, 0)
-                });
+                };
+                note.SetResourceReference(TextBlock.ForegroundProperty, "PsTextDim");
+                body.Children.Add(note);
 
                 StandardsPanel.Children.Add(new Expander
                 {
@@ -361,16 +362,17 @@ namespace PaintClone.Dialogs
                 first = false;
             }
 
-            StandardsPanel.Children.Add(new TextBlock
+            var pantoneNote = new TextBlock
             {
                 Text = "PANTONE is a licensed, proprietary system, so accurate values can't be bundled here - "
                      + "guessed approximations would defeat the purpose of a spot-colour system. Use a licensed "
                      + "Pantone tool and enter the value in the RGB or Hex box.",
                 FontSize = 8,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(2, 6, 2, 0)
-            });
+            };
+            pantoneNote.SetResourceReference(TextBlock.ForegroundProperty, "PsTextDim");
+            StandardsPanel.Children.Add(pantoneNote);
         }
 
         private void AddNamedSwatch(System.Windows.Controls.Primitives.UniformGrid grid, Color color, string label)

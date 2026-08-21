@@ -4,7 +4,7 @@
         Title="Edit Colors" Height="580" Width="640"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" WindowStyle="ToolWindow"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
-        FontFamily="Segoe UI" FontSize="11" Background="{StaticResource XpFace}"
+        FontFamily="Segoe UI" FontSize="11" Background="{DynamicResource XpFace}"
         ShowInTaskbar="False">
     <Grid Margin="10">
         <Grid.ColumnDefinitions>
@@ -87,7 +87,7 @@
 
                 <StackPanel Margin="12,0,0,0" VerticalAlignment="Top">
                     <TextBlock Text="Current / New:" FontSize="9" Margin="0,0,0,2"/>
-                    <Border BorderBrush="{StaticResource XpBorderDarkShadow}" BorderThickness="2" Width="70" Height="46">
+                    <Border BorderBrush="{DynamicResource XpBorderDarkShadow}" BorderThickness="2" Width="70" Height="46">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition/>

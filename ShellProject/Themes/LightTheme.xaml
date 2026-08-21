@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ===================================================================
+         Light theme (Photoshop-style). Same key set as DarkTheme.xaml - see
+         the comment there. Every color below was picked to keep at least a
+         4.5:1 contrast ratio against whichever face/content brush it's meant
+         to sit on.
+         =================================================================== -->
+    <SolidColorBrush x:Key="XpFace" Color="#F0F0F0"/>            <!-- panel face -->
+    <SolidColorBrush x:Key="XpFaceDark" Color="#E4E4E4"/>        <!-- sunken / content well face -->
+    <SolidColorBrush x:Key="XpBorder" Color="#B5B5B5"/>          <!-- separators -->
+    <SolidColorBrush x:Key="XpBorderLight" Color="#FFFFFF"/>     <!-- raised-edge highlight -->
+    <SolidColorBrush x:Key="XpBorderDarkShadow" Color="#1473E6"/><!-- pressed / checked accent border -->
+    <SolidColorBrush x:Key="XpMenuBg" Color="#E1E1E1"/>
+    <SolidColorBrush x:Key="XpSelection" Color="#1473E6"/>
+    <SolidColorBrush x:Key="XpTitleStart" Color="#DADADA"/>
+    <SolidColorBrush x:Key="XpTitleEnd" Color="#F0F0F0"/>
+
+    <!-- Photoshop-ish tokens -->
+    <SolidColorBrush x:Key="PsAccent" Color="#1473E6"/>
+    <SolidColorBrush x:Key="PsAccentSoft" Color="#CFE4FA"/>
+    <SolidColorBrush x:Key="PsText" Color="#1E1E1E"/>
+    <SolidColorBrush x:Key="PsTextDim" Color="#5E5E5E"/>
+    <SolidColorBrush x:Key="PsCanvasSurround" Color="#ACACAC"/>
+    <SolidColorBrush x:Key="PsContentBg" Color="#FFFFFF"/>       <!-- list/content wells -->
+    <SolidColorBrush x:Key="PsHover" Color="#D8D8D8"/>
+
+</ResourceDictionary>

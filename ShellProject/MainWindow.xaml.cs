@@ -56,6 +56,12 @@ namespace PaintClone
         {
             InitializeComponent();
 
+            // App.OnStartup already applied the saved theme before this window was constructed -
+            // just sync the two Theme menu checkmarks to match so they don't default to "Dark"
+            // when the saved preference was actually Light.
+            MenuThemeDark.IsChecked = ThemeManager.Current == ThemeManager.Dark;
+            MenuThemeLight.IsChecked = ThemeManager.Current == ThemeManager.Light;
+
             CanvasStack.Children.Insert(0, _canvas);
             _canvas.HorizontalAlignment = HorizontalAlignment.Left;
             _canvas.VerticalAlignment = VerticalAlignment.Top;
@@ -175,12 +181,16 @@ namespace PaintClone
             catch
             {
                 // Icon resource missing for some reason - fall back to a readable label rather
-                // than an empty button.
+                // than an empty button. Explicit dark Foreground, not the theme-following default:
+                // this sits on ToolButtonStyle's constant near-white icon chip regardless of which
+                // app theme is active (see App.xaml), so light theme-appropriate text would go
+                // invisible - light-on-near-white - the moment the active theme is Dark.
                 return new TextBlock
                 {
                     Text = ToolFallbackText.TryGetValue(toolKey, out var t) ? t : toolKey,
                     FontSize = 9,
-                    TextAlignment = TextAlignment.Center
+                    TextAlignment = TextAlignment.Center,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E))
                 };
             }
         }
@@ -1148,13 +1158,35 @@ namespace PaintClone
         // Tool options panel (size / fill mode / brush shape / text formatting)
         // ===================================================================
 
+        /// <summary>Appends a small caption to the (horizontal) options bar, vertically centered
+        /// against the buttons that follow it and with a fixed gap to whatever comes next - the
+        /// single place that gap is decided, so every label in the bar lines up the same way.</summary>
+        private void AddOptionLabel(string text) => ToolOptionsPanel.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 9,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0)
+        });
+
+        /// <summary>Appends one control/group to the options bar, vertically centered with a fixed
+        /// gap before the next label - the horizontal-bar counterpart of <see cref="AddOptionLabel"/>.
+        /// Any margin already set on the element (e.g. between buttons within a WrapPanel) is left
+        /// alone; only the group's own vertical alignment and trailing gap are standardized.</summary>
+        private void AddOptionGroup(FrameworkElement element)
+        {
+            element.VerticalAlignment = VerticalAlignment.Center;
+            element.Margin = new Thickness(0, 0, 16, 0);
+            ToolOptionsPanel.Children.Add(element);
+        }
+
         /// <summary>Adds a labeled row of mutually-exclusive toggle buttons, with the current value
         /// shown pressed-in. This is the single place selection-highlighting is handled, so every
         /// option group (size, brush shape, fill mode, zoom, opaque/transparent) looks and behaves
         /// consistently.</summary>
         private void AddExclusiveToggleRow(string label, IEnumerable<(string Content, bool Selected, Action OnSelect)> items)
         {
-            ToolOptionsPanel.Children.Add(new TextBlock { Text = label, FontSize = 9, Margin = new Thickness(0, 2, 0, 0) });
+            AddOptionLabel(label);
             var wrap = new WrapPanel();
             var buttons = new List<ToggleButton>();
             foreach (var (content, selected, onSelect) in items)
@@ -1174,7 +1206,7 @@ namespace PaintClone
                 buttons.Add(btn);
                 wrap.Children.Add(btn);
             }
-            ToolOptionsPanel.Children.Add(wrap);
+            AddOptionGroup(wrap);
         }
 
         private void BuildToolOptions(string key)
@@ -1240,10 +1272,10 @@ namespace PaintClone
                 };
                 ditherBtn.Checked += (o, e) => _ctx.GradientDither = true;
                 ditherBtn.Unchecked += (o, e) => _ctx.GradientDither = false;
-                ToolOptionsPanel.Children.Add(new TextBlock { Text = "Dither:", FontSize = 9, Margin = new Thickness(0, 2, 0, 0) });
+                AddOptionLabel("Dither:");
                 var dw = new WrapPanel();
                 dw.Children.Add(ditherBtn);
-                ToolOptionsPanel.Children.Add(dw);
+                AddOptionGroup(dw);
             }
 
             if (key == "Star")
@@ -1271,8 +1303,8 @@ namespace PaintClone
 
             if (isText)
             {
-                ToolOptionsPanel.Children.Add(new TextBlock { Text = "Font:", FontSize = 9, Margin = new Thickness(0, 0, 0, 2) });
-                var fontCombo = new ComboBox { Width = 100, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 4) };
+                AddOptionLabel("Font:");
+                var fontCombo = new ComboBox { Width = 100, HorizontalAlignment = HorizontalAlignment.Left };
                 foreach (var f in CommonFontFamilies) fontCombo.Items.Add(f);
                 fontCombo.SelectedItem = CommonFontFamilies.Contains(_textFontFamily) ? _textFontFamily : CommonFontFamilies[0];
                 fontCombo.SelectionChanged += (o, e) =>
@@ -1281,7 +1313,7 @@ namespace PaintClone
                     _textFontFamily = fam;
                     if (_activeTextBox != null) _activeTextBox.FontFamily = new FontFamily(fam);
                 };
-                ToolOptionsPanel.Children.Add(fontCombo);
+                AddOptionGroup(fontCombo);
 
                 var sizes = new[] { 8, 10, 12, 16, 20, 24, 36, 48 };
                 AddExclusiveToggleRow("Size:", sizes.Select(sz =>
@@ -1291,7 +1323,7 @@ namespace PaintClone
                         if (_activeTextBox != null) _activeTextBox.FontSize = Math.Max(8, _textFontSize * _zoom);
                     }))));
 
-                ToolOptionsPanel.Children.Add(new TextBlock { Text = "Style:", FontSize = 9, Margin = new Thickness(0, 2, 0, 0) });
+                AddOptionLabel("Style:");
                 var boldBtn = new ToggleButton { Style = (Style)FindResource("OptionToggleStyle"), Content = "B", FontWeight = FontWeights.Bold, IsChecked = _textBold };
                 var italicBtn = new ToggleButton { Style = (Style)FindResource("OptionToggleStyle"), Content = "I", FontStyle = FontStyles.Italic, IsChecked = _textItalic };
                 var underlineBtn = new ToggleButton { Style = (Style)FindResource("OptionToggleStyle"), Content = "U", IsChecked = _textUnderline };
@@ -1303,7 +1335,7 @@ namespace PaintClone
                 underlineBtn.Unchecked += (o, e) => { _textUnderline = false; if (_activeTextBox != null) _activeTextBox.TextDecorations = null; };
                 var wrap = new WrapPanel();
                 wrap.Children.Add(boldBtn); wrap.Children.Add(italicBtn); wrap.Children.Add(underlineBtn);
-                ToolOptionsPanel.Children.Add(wrap);
+                AddOptionGroup(wrap);
             }
 
             if (key == "Magnifier")
@@ -1314,7 +1346,7 @@ namespace PaintClone
 
             if (key is "Select" or "FreeFormSelect" or "MagicWand")
             {
-                ToolOptionsPanel.Children.Add(new TextBlock { Text = "Background:", FontSize = 9, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+                AddOptionLabel("Background:");
                 AddDrawOpaqueToggleRow();
             }
         }
@@ -1349,7 +1381,7 @@ namespace PaintClone
             var wrap = new WrapPanel();
             wrap.Children.Add(opaqueBtn);
             wrap.Children.Add(transparentBtn);
-            ToolOptionsPanel.Children.Add(wrap);
+            AddOptionGroup(wrap);
         }
 
         // ===================================================================
@@ -2266,6 +2298,19 @@ namespace PaintClone
 
         private void ToggleLayersWindow_Click(object sender, RoutedEventArgs e) =>
             LayersSection.Visibility = MenuLayersWindow.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+
+        private void ThemeDark_Click(object sender, RoutedEventArgs e) => SetTheme(ThemeManager.Dark);
+        private void ThemeLight_Click(object sender, RoutedEventArgs e) => SetTheme(ThemeManager.Light);
+
+        /// <summary>The two Theme menu entries behave like a radio group even though MenuItem has
+        /// no built-in exclusive-checkable mode - clicking one applies that theme and syncs both
+        /// checkmarks to match.</summary>
+        private void SetTheme(string themeName)
+        {
+            ThemeManager.Apply(themeName);
+            MenuThemeDark.IsChecked = themeName == ThemeManager.Dark;
+            MenuThemeLight.IsChecked = themeName == ThemeManager.Light;
+        }
 
         private void ShortcutManager_Click(object sender, RoutedEventArgs e)
         {

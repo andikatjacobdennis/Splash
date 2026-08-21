@@ -4,7 +4,7 @@
         Title="Paint Help" Height="480" Width="620"
         WindowStartupLocation="CenterOwner" WindowStyle="ToolWindow"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
-        FontFamily="Segoe UI" FontSize="11" Background="{StaticResource XpFace}"
+        FontFamily="Segoe UI" FontSize="11" Background="{DynamicResource XpFace}"
         ShowInTaskbar="False">
     <DockPanel>
 
@@ -20,12 +20,12 @@
 
             <DockPanel Grid.Column="0">
                 <TextBlock DockPanel.Dock="Top" Text="Contents" FontWeight="Bold" Margin="2,0,0,4"/>
-                <Border BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Background="White">
+                <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="White">
                     <TreeView x:Name="ContentsTree" BorderThickness="0" SelectedItemChanged="ContentsTree_SelectedItemChanged"/>
                 </Border>
             </DockPanel>
 
-            <Border Grid.Column="2" BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Background="White">
+            <Border Grid.Column="2" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="White">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12,10">
                     <StackPanel>
                         <TextBlock x:Name="TopicTitleText" FontSize="14" FontWeight="Bold" Foreground="#0A246A" Margin="0,0,0,8" TextWrapping="Wrap"/>

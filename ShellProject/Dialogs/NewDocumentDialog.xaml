@@ -4,7 +4,7 @@
         Title="New Picture" Height="420" Width="360"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" WindowStyle="ToolWindow"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
-        FontFamily="Segoe UI" FontSize="11" Background="{StaticResource XpFace}"
+        FontFamily="Segoe UI" FontSize="11" Background="{DynamicResource XpFace}"
         ShowInTaskbar="False">
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -13,7 +13,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" BorderBrush="{StaticResource XpBorder}" BorderThickness="1" Background="White" Margin="0,0,0,8">
+        <Border Grid.Row="0" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="White" Margin="0,0,0,8">
             <ListBox x:Name="PresetList" BorderThickness="0" SelectionChanged="PresetList_SelectionChanged"/>
         </Border>
 
