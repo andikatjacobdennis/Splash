@@ -693,6 +693,30 @@
             </Setter>
         </Style>
 
+        <!-- Layer visibility toggle: a bare slot for the eye glyph, with no button chrome of its
+             own - the eye (or its absence) is the whole control, as in Photoshop's layers panel. -->
+        <Style x:Key="LayerEyeStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <!-- Hover tint is what tells you the empty slot of a hidden layer is
+                                 still a control you can click, with nothing drawn in it. -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource PsHover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Small toggle buttons used in the options bar (size / fill / shape pickers). -->
         <Style x:Key="OptionToggleStyle" TargetType="ToggleButton">
             <Setter Property="Width" Value="22"/>

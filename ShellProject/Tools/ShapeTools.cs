@@ -260,7 +260,12 @@ namespace PaintClone.Tools
         {
             var (outline, fill, doFill) = ResolveColors(ctx);
             var r = NormalizedRect(start, end);
-            int radius = Math.Max(4, Math.Min(r.Width, r.Height) / 4);
+            // 0 keeps the original behaviour: derive a radius from the shape's own size. Anything
+            // else is the explicit radius chosen in the tool options, capped so it can't exceed
+            // half the shorter side (past that the "rounding" is just a stadium/ellipse).
+            int radius = ctx.CornerRadius > 0
+                ? Math.Min(ctx.CornerRadius, Math.Max(1, Math.Min(r.Width, r.Height) / 2))
+                : Math.Max(4, Math.Min(r.Width, r.Height) / 4);
             surface.DrawRoundedRect(r, radius, outline, Math.Max(1, ctx.PenSize), doFill, fill);
         }
     }
@@ -349,7 +354,9 @@ namespace PaintClone.Tools
             var r = NormalizedRect(start, end);
             double cx = r.X + r.Width / 2.0, cy = r.Y + r.Height / 2.0;
             double rx = r.Width / 2.0, ry = r.Height / 2.0;
-            int points = Math.Max(3, Math.Min(12, ctx.StarPoints));
+            // Upper bound matches what the Points dropdown actually offers - it was 12 here while
+            // the picker went to 24, so the top half of that list silently drew a 12-point star.
+            int points = Math.Max(3, Math.Min(24, ctx.StarPoints));
             var pts = new List<Point>();
             for (int i = 0; i < points * 2; i++)
             {
@@ -477,7 +484,12 @@ namespace PaintClone.Tools
         }
 
         /// <summary>Position along the blend (0 = start colour, 1 = end colour) for one pixel,
-        /// according to the selected gradient shape.</summary>
+        /// according to the selected gradient shape. Exposed (as PositionAlong) so the tool-options
+        /// preview can render each blend with this exact maths rather than an approximation of it.</summary>
+        internal static double PositionAlong(GradientType type, int x, int y, Point start, Point end,
+                                             double dx, double dy, double lenSq, double len)
+            => ComputeT(type, x, y, start, end, dx, dy, lenSq, len);
+
         private static double ComputeT(GradientType type, int x, int y, Point start, Point end,
                                        double dx, double dy, double lenSq, double len)
         {

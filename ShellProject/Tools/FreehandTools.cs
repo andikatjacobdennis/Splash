@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using PaintClone.Controls;
+using PaintClone.Models;
 
 namespace PaintClone.Tools
 {
@@ -90,10 +91,17 @@ namespace PaintClone.Tools
         protected override void Deposit(ToolContext ctx, CanvasMouseEventArgs e)
         {
             var c = ActiveColor(ctx, e.Button);
-            int x = (int)e.DocPointInt.X, y = (int)e.DocPointInt.Y;
-            int size = Math.Max(1, ctx.PenSize);
-            var surf = ctx.Document.Surface;
-            switch (ctx.BrushShape)
+            StampShape(ctx.Document.Surface, (int)e.DocPointInt.X, (int)e.DocPointInt.Y,
+                       Math.Max(1, ctx.PenSize), c, ctx.BrushShape);
+        }
+
+        /// <summary>Lays down a single brush stamp of the given shape. Extracted from Deposit so the
+        /// tool-options previews can render each shape with the *actual* stamping code rather than a
+        /// hand-drawn approximation of it - which also means a preview can never quietly drift out
+        /// of step with what the brush really draws.</summary>
+        public static void StampShape(RasterSurface surf, int x, int y, int size, Color c, BrushShape shape)
+        {
+            switch (shape)
             {
                 case BrushShape.Round:
                     surf.StampCircle(x, y, Math.Max(1, size / 2), c);

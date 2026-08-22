@@ -1294,24 +1294,84 @@ namespace PaintClone
         /// choice in words rather than a symbol, and - the practical reason - doesn't have to fit
         /// every possible value on screen at once, which is what had kept things like brush size
         /// pinned to a handful of preset numbers.</summary>
+        /// <summary>One row of a tool-options dropdown. A plain data object, not a control, because
+        /// a ComboBox draws its selected row a second time inside the closed box - and a WPF element
+        /// can only have one parent, so reusing controls as items throws the moment such a row is
+        /// selected. Bound through a DataTemplate instead, which builds its own visuals per use.</summary>
+        private sealed class OptionRow
+        {
+            public string Text { get; init; }
+            public ImageSource Preview { get; init; }
+            public object Value { get; init; }
+        }
+
+        private DataTemplate _optionRowTemplate;
+
+        /// <summary>Template for an options-dropdown row: preview image (collapsed when the option
+        /// has none) followed by the option's name.</summary>
+        private DataTemplate OptionRowTemplate => _optionRowTemplate ??= (DataTemplate)System.Windows.Markup.XamlReader.Parse(
+            @"<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
+                            xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>
+                <StackPanel Orientation='Horizontal'>
+                  <Image Source='{Binding Preview}' Stretch='None' Margin='0,0,6,0'
+                         VerticalAlignment='Center' SnapsToDevicePixels='True'
+                         RenderOptions.BitmapScalingMode='NearestNeighbor'>
+                    <Image.Style>
+                      <Style TargetType='Image'>
+                        <Style.Triggers>
+                          <DataTrigger Binding='{Binding Preview}' Value='{x:Null}'>
+                            <Setter Property='Visibility' Value='Collapsed'/>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Image.Style>
+                  </Image>
+                  <TextBlock Text='{Binding Text}' VerticalAlignment='Center'/>
+                </StackPanel>
+              </DataTemplate>");
+
         private ComboBox AddOptionCombo<T>(string label, IEnumerable<(string Text, T Value)> items,
-                                           T current, Action<T> onSelect, double width = 104)
+                                           T current, Action<T> onSelect, double width = 104,
+                                           Func<T, ImageSource> preview = null)
         {
             AddOptionLabel(label);
-            var combo = new ComboBox { Width = width, Height = 22, VerticalContentAlignment = VerticalAlignment.Center };
+            var combo = new ComboBox
+            {
+                Width = width,
+                Height = 22,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                ItemTemplate = OptionRowTemplate
+            };
+
+            OptionRow selected = null;
             foreach (var (text, value) in items)
             {
-                var item = new ComboBoxItem { Content = text, Tag = value };
-                combo.Items.Add(item);
-                if (EqualityComparer<T>.Default.Equals(value, current)) combo.SelectedItem = item;
+                var row = new OptionRow
+                {
+                    Text = text,
+                    Value = value,
+                    Preview = preview == null ? null : SafePreview(preview, value)
+                };
+                combo.Items.Add(row);
+                if (EqualityComparer<T>.Default.Equals(value, current)) selected = row;
             }
+            combo.SelectedItem = selected;
             if (combo.SelectedItem == null && combo.Items.Count > 0) combo.SelectedIndex = 0;
+
             combo.SelectionChanged += (o, e) =>
             {
-                if (combo.SelectedItem is ComboBoxItem { Tag: T value }) onSelect(value);
+                if (combo.SelectedItem is OptionRow { Value: T value }) onSelect(value);
             };
             AddOptionGroup(combo);
             return combo;
+        }
+
+        /// <summary>A preview that fails to render must never take the whole options bar down with
+        /// it - the dropdown is still perfectly usable with just its text.</summary>
+        private static ImageSource SafePreview<T>(Func<T, ImageSource> preview, T value)
+        {
+            try { return preview(value); }
+            catch { return null; }
         }
 
         /// <summary>A dropdown over an unbroken run of whole numbers - every value in the range, not
@@ -1346,7 +1406,24 @@ namespace PaintClone
             if (key == "Arrow")
             {
                 AddOptionCombo("Head:", ArrowStyleChoices.Select(a => (a.Tip, a.Style)),
-                    _ctx.ArrowStyle, v => _ctx.ArrowStyle = v, 150);
+                    _ctx.ArrowStyle, v => _ctx.ArrowStyle = v, 178,
+                    OptionPreviews.ArrowStylePreview);
+            }
+
+            if (key == "Fill")
+            {
+                AddNumberCombo("Tolerance:", 0, 255, _ctx.FillTolerance, v => _ctx.FillTolerance = v);
+                AddOptionCombo("Area:", new[] { ("Connected area", true), ("Whole layer", false) },
+                    _ctx.FillContiguous, v => _ctx.FillContiguous = v, 148,
+                    OptionPreviews.AreaPreview);
+            }
+
+            if (key == "RoundedRectangle")
+            {
+                // 0 keeps the original "work it out from the shape's size" behaviour.
+                var radii = new List<(string, int)> { ("Auto", 0) };
+                for (int i = 1; i <= 60; i++) radii.Add((i.ToString(), i));
+                AddOptionCombo("Corners:", radii, _ctx.CornerRadius, v => _ctx.CornerRadius = v, 72);
             }
 
             // Anti-aliasing applies to any tool that draws an edge. Offered per tool (and
@@ -1357,7 +1434,8 @@ namespace PaintClone
                 or "Gradient" or "Text")
             {
                 AddOptionCombo("Edges:", new[] { ("Hard", false), ("Smooth", true) },
-                    _ctx.AntiAlias, v => _ctx.AntiAlias = v, 82);
+                    _ctx.AntiAlias, v => _ctx.AntiAlias = v, 112,
+                    OptionPreviews.EdgesPreview);
             }
 
             if (key == "MagicWand")
@@ -1365,13 +1443,15 @@ namespace PaintClone
                 AddNumberCombo("Tolerance:", 0, 255, _ctx.WandTolerance, v => _ctx.WandTolerance = v);
 
                 AddOptionCombo("Search:", new[] { ("Connected area", true), ("Whole layer", false) },
-                    _ctx.WandContiguous, v => _ctx.WandContiguous = v, 118);
+                    _ctx.WandContiguous, v => _ctx.WandContiguous = v, 148,
+                    OptionPreviews.AreaPreview);
             }
 
             if (key == "Gradient")
             {
                 AddOptionCombo("Blend:", GradientTypeChoices.Select(g => (g.Tip, g.Type)),
-                    _ctx.GradientType, v => _ctx.GradientType = v, 200);
+                    _ctx.GradientType, v => _ctx.GradientType = v, 232,
+                    OptionPreviews.GradientPreview);
 
                 // A plain on/off, so a checkbox rather than a two-entry dropdown.
                 var dither = new CheckBox
@@ -1388,13 +1468,17 @@ namespace PaintClone
 
             if (key == "Star")
             {
-                AddNumberCombo("Points:", 3, 24, _ctx.StarPoints, v => _ctx.StarPoints = v);
+                var pointCounts = new List<(string, int)>();
+                for (int n = 3; n <= 24; n++) pointCounts.Add((n.ToString(), n));
+                AddOptionCombo("Points:", pointCounts, _ctx.StarPoints, v => _ctx.StarPoints = v, 74,
+                    OptionPreviews.StarPointsPreview);
             }
 
             if (isBrush)
             {
                 AddOptionCombo("Shape:", BrushShapeChoices.Select(bs => (bs.Tip, bs.Shape)),
-                    _ctx.BrushShape, v => _ctx.BrushShape = v, 160);
+                    _ctx.BrushShape, v => _ctx.BrushShape = v, 196,
+                    OptionPreviews.BrushShapePreview);
             }
 
             if (needsFill)
@@ -1404,7 +1488,8 @@ namespace PaintClone
                     ("Outline only", ShapeFillMode.OutlineOnly),
                     ("Filled", ShapeFillMode.FillOnly),
                     ("Outline + fill", ShapeFillMode.OutlineAndFill),
-                }, _ctx.ShapeFillMode, v => _ctx.ShapeFillMode = v, 116);
+                }, _ctx.ShapeFillMode, v => _ctx.ShapeFillMode = v, 148,
+                   OptionPreviews.FillModePreview);
             }
 
             if (isText)

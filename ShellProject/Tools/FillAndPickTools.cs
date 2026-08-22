@@ -5,17 +5,21 @@ using PaintClone.Controls;
 
 namespace PaintClone.Tools
 {
-    /// <summary>Classic 4-connected, exact-color flood fill (spec section 16).</summary>
+    /// <summary>4-connected flood fill (spec section 16), with the two options a paint bucket is
+    /// normally expected to have: a tolerance, so near-but-not-identical shades can be swallowed by
+    /// one fill, and a contiguous/global switch, so a colour can be replaced everywhere at once
+    /// rather than only in the region that was clicked.</summary>
     public class FillTool : ITool
     {
         public string Name => "Fill With Color";
-        public string StatusHint => "Click inside an area to fill it with the current drawing color.";
+        public string StatusHint => "Click inside an area to fill it. Tolerance and Area are in the tool options.";
 
         public void OnMouseDown(ToolContext ctx, CanvasMouseEventArgs e)
         {
             ctx.History.PushUndoState(ctx.Document, "Fill With Color");
             var c = e.Button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
-            ctx.Document.Surface.FloodFill((int)e.DocPointInt.X, (int)e.DocPointInt.Y, c);
+            ctx.Document.Surface.FloodFill((int)e.DocPointInt.X, (int)e.DocPointInt.Y, c,
+                                           ctx.FillTolerance, ctx.FillContiguous);
             ctx.Document.MarkDirty();
         }
 
@@ -52,7 +56,9 @@ namespace PaintClone.Tools
     {
         public string Name => "Magnifier";
         public string StatusHint => "Click to zoom in and out, or drag a box to zoom to that area.";
-        public static readonly double[] Levels = { 1, 2, 4, 6, 8 };
+        /// <summary>Every whole zoom from 1x to 10x. Was a sparse 1/2/4/6/8 set chosen to fit a row
+        /// of buttons; now that zoom is picked from a dropdown there's no reason to skip steps.</summary>
+        public static readonly double[] Levels = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 
         public Action<MouseButton> OnClick;
         public Action<Int32Rect> OnAreaSelected;

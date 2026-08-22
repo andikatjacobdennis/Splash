@@ -594,42 +594,79 @@ namespace PaintClone.Models
             return dx * dx + dy * dy <= r * r;
         }
 
-        /// <summary>Classic 4-connected flood fill with exact color matching (no tolerance/anti-alias awareness),
-        /// matching legacy Paint semantics. Runs on a plain managed scanline stack so huge fills don't blow the call stack.</summary>
-        public void FloodFill(int startX, int startY, Color newColor)
+        /// <summary>4-connected flood fill. Runs on a plain managed scanline stack so huge fills
+        /// don't blow the call stack.
+        ///
+        /// tolerance: how far a pixel may differ from the clicked colour and still be filled, per
+        /// channel (0 = exact match, the legacy Paint behaviour and still the default).
+        /// contiguous: true fills only the connected region containing the start point; false
+        /// replaces every matching pixel in the layer, wherever it is.
+        ///
+        /// The matching rule is deliberately the same per-channel comparison MagicWandSelect
+        /// already uses, so a given tolerance selects and fills the same set of pixels rather than
+        /// the two tools disagreeing about what "close enough" means.</summary>
+        public void FloodFill(int startX, int startY, Color newColor, int tolerance = 0, bool contiguous = true)
         {
             if (startX < 0 || startY < 0 || startX >= Width || startY >= Height) return;
             Color target = GetPixel(startX, startY);
-            if (ColorsEqual(target, newColor)) return;
+            if (tolerance <= 0 && ColorsEqual(target, newColor)) return;
+
+            bool Matches(Color c)
+            {
+                if (tolerance <= 0) return ColorsEqual(c, target);
+                return Math.Abs(c.R - target.R) <= tolerance
+                    && Math.Abs(c.G - target.G) <= tolerance
+                    && Math.Abs(c.B - target.B) <= tolerance
+                    && Math.Abs(c.A - target.A) <= tolerance;
+            }
 
             Lock();
             try
             {
+                uint newPacked = PremultiplyStore(newColor);
+
+                if (!contiguous)
+                {
+                    // Global replace: no traversal needed, just sweep every pixel once.
+                    for (int y = 0; y < Height; y++)
+                        for (int x = 0; x < Width; x++)
+                            if (Matches(ReadRaw(x, y)))
+                                *(uint*)(_buffer + y * _stride + x * 4) = newPacked;
+                    return;
+                }
+
+                // Filled pixels can still satisfy Matches when a tolerance is in play (the new
+                // colour may itself be within tolerance of the target), which would let the scan
+                // revisit them forever - so track what's already been done rather than relying on
+                // the pixel test alone to terminate.
+                var done = new bool[Width, Height];
                 var stack = new System.Collections.Generic.Stack<(int x, int y)>();
                 stack.Push((startX, startY));
-                uint newPacked = PremultiplyStore(newColor);
 
                 while (stack.Count > 0)
                 {
                     var (x, y) = stack.Pop();
                     if (x < 0 || y < 0 || x >= Width || y >= Height) continue;
-                    if (!ColorsEqual(ReadRaw(x, y), target)) continue;
+                    if (done[x, y] || !Matches(ReadRaw(x, y))) continue;
 
                     // scan left
                     int xl = x;
-                    while (xl - 1 >= 0 && ColorsEqual(ReadRaw(xl - 1, y), target)) xl--;
+                    while (xl - 1 >= 0 && !done[xl - 1, y] && Matches(ReadRaw(xl - 1, y))) xl--;
                     int xr = x;
-                    while (xr + 1 < Width && ColorsEqual(ReadRaw(xr + 1, y), target)) xr++;
+                    while (xr + 1 < Width && !done[xr + 1, y] && Matches(ReadRaw(xr + 1, y))) xr++;
 
                     for (int xi = xl; xi <= xr; xi++)
+                    {
                         *(uint*)(_buffer + y * _stride + xi * 4) = newPacked;
+                        done[xi, y] = true;
+                    }
 
                     if (y - 1 >= 0)
                         for (int xi = xl; xi <= xr; xi++)
-                            if (ColorsEqual(ReadRaw(xi, y - 1), target)) stack.Push((xi, y - 1));
+                            if (!done[xi, y - 1] && Matches(ReadRaw(xi, y - 1))) stack.Push((xi, y - 1));
                     if (y + 1 < Height)
                         for (int xi = xl; xi <= xr; xi++)
-                            if (ColorsEqual(ReadRaw(xi, y + 1), target)) stack.Push((xi, y + 1));
+                            if (!done[xi, y + 1] && Matches(ReadRaw(xi, y + 1))) stack.Push((xi, y + 1));
                 }
             }
             finally

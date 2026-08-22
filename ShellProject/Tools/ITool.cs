@@ -68,6 +68,19 @@ namespace PaintClone.Tools
         /// <summary>Whether the Gradient tool dithers. Without it, a slow blend across many pixels
         /// shows visible banding, because 8-bit channels can only step in whole units.</summary>
         public bool GradientDither = true;
+
+        /// <summary>How far a pixel's colour may differ from the clicked one and still be filled by
+        /// the paint bucket. 0 means an exact match - the legacy behaviour, and still the default.</summary>
+        public int FillTolerance = 0;
+
+        /// <summary>True: the paint bucket fills only the connected region you clicked. False: it
+        /// replaces every matching pixel in the layer, wherever it is.</summary>
+        public bool FillContiguous = true;
+
+        /// <summary>Corner rounding for the Rounded Rectangle tool, in document pixels. 0 means
+        /// "pick a radius from the shape's own size", which is what it always did before this was
+        /// adjustable.</summary>
+        public int CornerRadius = 0;
     }
 
     /// <summary>

@@ -98,22 +98,18 @@ namespace PaintClone.Dialogs
                     mergeCheck.Checked += (s, e) => { if (!_populating) _checkedForMerge.Add(layer); UpdateButtonStates(); };
                     mergeCheck.Unchecked += (s, e) => { if (!_populating) _checkedForMerge.Remove(layer); UpdateButtonStates(); };
 
-                    // Takes the themed OptionToggleStyle rather than the stock WPF ToggleButton
-                    // chrome. Left unstyled it drew as a pale system button, and its glyph - a bare
-                    // string, so WPF wraps it in a TextBlock that inherits the theme's light
-                    // foreground - came out light-on-light: a small blank-looking rectangle.
+                    // Photoshop-style visibility control: a drawn eye in its own borderless slot,
+                    // shown when the layer is visible and simply absent when it isn't - the empty
+                    // slot IS the "hidden" state, exactly as it reads in Photoshop's own panel.
                     var eye = new ToggleButton
                     {
-                        Style = (Style)FindResource("OptionToggleStyle"),
-                        Content = layer.Visible ? "◉" : "○",
+                        Style = (Style)FindResource("LayerEyeStyle"),
+                        Content = MakeEyeGlyph(layer.Visible),
                         IsChecked = layer.Visible,
-                        Width = 22,
-                        Height = 20,
-                        FontSize = 11,
                         Focusable = false,
                         VerticalAlignment = VerticalAlignment.Center,
-                        Margin = new Thickness(0, 0, 6, 0),
-                        ToolTip = "Show or hide this layer"
+                        Margin = new Thickness(0, 0, 4, 0),
+                        ToolTip = layer.Visible ? "Hide this layer" : "Show this layer"
                     };
                     eye.Checked += (s, e) => { if (!_populating) { _document.SetLayerVisible(layerIndex, true); } };
                     eye.Unchecked += (s, e) => { if (!_populating) { _document.SetLayerVisible(layerIndex, false); } };
@@ -179,6 +175,35 @@ namespace PaintClone.Dialogs
             }
 
             UpdateButtonStates();
+        }
+
+        /// <summary>The eye itself: an almond outline with a pupil, drawn as vector geometry in the
+        /// theme's own glyph colour. A hidden layer gets nothing at all rather than a crossed-out
+        /// eye - an empty slot is how Photoshop shows it, and it keeps the visible layers the only
+        /// thing drawing the eye down the column.</summary>
+        private static UIElement MakeEyeGlyph(bool visible)
+        {
+            if (!visible) return null;
+
+            var canvas = new Canvas { Width = 16, Height = 16 };
+
+            var outline = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M1,8 C3.2,4.2 6,2.6 8,2.6 C10,2.6 12.8,4.2 15,8 C12.8,11.8 10,13.4 8,13.4 C6,13.4 3.2,11.8 1,8 Z"),
+                StrokeThickness = 1.4,
+                StrokeLineJoin = PenLineJoin.Round
+            };
+            outline.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "PsIconGlyph");
+
+            var pupil = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M8,5.6 a2.4,2.4 0 1,0 0.01,0 Z")
+            };
+            pupil.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "PsIconGlyph");
+
+            canvas.Children.Add(outline);
+            canvas.Children.Add(pupil);
+            return canvas;
         }
 
         /// <summary>Merge is enabled either for a real multi-layer selection (two or more ticked) or
