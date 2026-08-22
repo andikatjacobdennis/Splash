@@ -8,6 +8,32 @@ using PaintClone.Models;
 
 namespace PaintClone.Tools
 {
+    /// <summary>
+    /// Applies the stroke settings (anti-aliasing, dash pattern) a shape is about to be drawn with.
+    /// Kept in one place because a shape's outline is stroked from a dozen separate DrawLine calls
+    /// and every one of them has to agree - and because the dash phase must be reset once per
+    /// shape, not once per edge, or every side of a rectangle would start with a fresh dash and the
+    /// corners would never line up. Free-standing rather than a member of DragShapeToolBase because
+    /// Curve and Polygon draw outlines too but aren't part of that hierarchy.
+    /// </summary>
+    internal static class StrokeSetup
+    {
+        public static void Begin(ToolContext ctx, RasterSurface s)
+        {
+            s.AntiAlias = ctx.AntiAlias;
+            s.DashPattern = LineStyles.PatternFor(ctx.LineStyle, ctx.PenSize,
+                                                  ctx.DashLengthPercent, ctx.DashGapPercent);
+            s.DashPhase = 0;
+        }
+
+        public static void End(RasterSurface s)
+        {
+            s.AntiAlias = false;
+            s.DashPattern = null;
+            s.DashPhase = 0;
+        }
+    }
+
     /// <summary>Shared drag-preview-commit workflow used by Line/Rectangle/Ellipse/RoundedRectangle
     /// (spec section 38): nothing touches the real document until mouse-up.</summary>
     public abstract class DragShapeToolBase : ITool
@@ -80,6 +106,9 @@ namespace PaintClone.Tools
             _lastPreviewEnd = null;
         }
 
+        protected static void BeginStroke(ToolContext ctx, RasterSurface s) => StrokeSetup.Begin(ctx, s);
+        protected static void EndStroke(RasterSurface s) => StrokeSetup.End(s);
+
         public virtual void OnMouseMove(ToolContext ctx, CanvasMouseEventArgs e)
         {
             if (_mode == Mode.Moving)
@@ -97,9 +126,9 @@ namespace PaintClone.Tools
             _lastPreviewEnd = end;
             ctx.Canvas.ClearPreview();
             ctx.Canvas.PreviewSurface.Lock();
-            ctx.Canvas.PreviewSurface.AntiAlias = ctx.AntiAlias;
+            StrokeSetup.Begin(ctx, ctx.Canvas.PreviewSurface);
             DrawPreview(ctx, _start, end, ctx.Canvas.PreviewSurface);
-            ctx.Canvas.PreviewSurface.AntiAlias = false;
+            StrokeSetup.End(ctx.Canvas.PreviewSurface);
             ctx.Canvas.PreviewSurface.Unlock();
         }
 
@@ -139,7 +168,15 @@ namespace PaintClone.Tools
             {
                 ctx.BeginPendingShape(new PendingShape
                 {
-                    Render = (s, en, surface) => DrawPreview(ctx, s, en, surface),
+                    // Re-rendering a pending shape has to apply the same stroke settings the live
+                    // preview did, or a dashed (or anti-aliased) shape would quietly come out
+                    // solid the moment it was moved or resized.
+                    Render = (s, en, surface) =>
+                    {
+                        BeginStroke(ctx, surface);
+                        try { DrawPreview(ctx, s, en, surface); }
+                        finally { EndStroke(surface); }
+                    },
                     Start = _start,
                     End = end,
                     Pad = pad,
@@ -154,14 +191,14 @@ namespace PaintClone.Tools
             // result goes straight into the document and the current tool stays selected.
             ctx.History.PushUndoState(ctx.Document, Name);
             ctx.Document.Surface.Lock();
-            ctx.Document.Surface.AntiAlias = ctx.AntiAlias;
+            StrokeSetup.Begin(ctx, ctx.Document.Surface);
             // Only GradientTool's DrawPreview ever consults this (every other override writes
             // pixels directly), so turning it on unconditionally here is harmless for every other
             // shape tool that can reach this same direct-commit path via a zero-area click.
             ctx.Document.Surface.Blend = true;
             DrawPreview(ctx, _start, end, ctx.Document.Surface);
             ctx.Document.Surface.Blend = false;
-            ctx.Document.Surface.AntiAlias = false;
+            StrokeSetup.End(ctx.Document.Surface);
             ctx.Document.Surface.Unlock();
             ctx.Document.MarkDirty();
         }
@@ -309,15 +346,94 @@ namespace PaintClone.Tools
             double angle = Math.Atan2(dy, dx);
             double headLen = HeadLength(ctx, len);
 
-            bool filled = ctx.ArrowStyle is ArrowStyle.Filled or ArrowStyle.FilledBoth;
-            bool bothEnds = ctx.ArrowStyle is ArrowStyle.Both or ArrowStyle.FilledBoth;
+            DrawHeadsFor(surface, ctx.ArrowStyle, start, end, angle, headLen, thickness, c);
+        }
 
-            DrawHead(ctx, surface, end, angle, headLen, thickness, c, filled);
-            if (bothEnds) DrawHead(ctx, surface, start, angle + Math.PI, headLen, thickness, c, filled);
+        /// <summary>Draws whichever head(s) a style calls for onto an already-drawn shaft. Public to
+        /// this assembly so the tool-options preview renders heads with this exact code rather than
+        /// its own approximation - the previews previously drew a barbed head for every style, so
+        /// diamond, dot and bar all showed the wrong picture in the dropdown.</summary>
+        internal static void DrawHeadsFor(RasterSurface surface, ArrowStyle style, Point start, Point end,
+                                          double angle, double headLen, int thickness, Color c)
+        {
+            if (style == ArrowStyle.None) return;
+
+            bool bothEnds = style is ArrowStyle.Both or ArrowStyle.FilledBoth
+                or ArrowStyle.DiamondBoth or ArrowStyle.CircleBoth or ArrowStyle.BarBoth;
+
+            // The dash pattern belongs to the shaft only - a dashed arrowhead just looks like a
+            // broken one. Suppressed for the duration of the head and restored afterwards.
+            var savedDash = surface.DashPattern;
+            surface.DashPattern = null;
+            try
+            {
+                // Heads other than the barbed ones are shapes centred on the tip rather than swept
+                // back from it, so they're drawn separately from DrawHead's barb geometry.
+                switch (style)
+                {
+                    case ArrowStyle.Diamond:
+                    case ArrowStyle.DiamondBoth:
+                        DrawDiamondHead(surface, end, angle, headLen, c);
+                        if (bothEnds) DrawDiamondHead(surface, start, angle + Math.PI, headLen, c);
+                        return;
+
+                    case ArrowStyle.Circle:
+                    case ArrowStyle.CircleBoth:
+                        DrawDotHead(surface, end, headLen, c);
+                        if (bothEnds) DrawDotHead(surface, start, headLen, c);
+                        return;
+
+                    case ArrowStyle.Bar:
+                    case ArrowStyle.BarBoth:
+                        DrawBarHead(surface, end, angle, headLen, thickness, c);
+                        if (bothEnds) DrawBarHead(surface, start, angle + Math.PI, headLen, thickness, c);
+                        return;
+                }
+
+                bool filled = style is ArrowStyle.Filled or ArrowStyle.FilledBoth;
+                DrawHead(surface, end, angle, headLen, thickness, c, filled);
+                if (bothEnds) DrawHead(surface, start, angle + Math.PI, headLen, thickness, c, filled);
+            }
+            finally
+            {
+                surface.DashPattern = savedDash;
+            }
+        }
+
+        /// <summary>Solid diamond centred just behind the tip, pointing along dir.</summary>
+        private static void DrawDiamondHead(RasterSurface surface, Point tip, double dir, double headLen, Color c)
+        {
+            double half = headLen / 2;
+            var back = new Point(tip.X - Math.Cos(dir) * headLen, tip.Y - Math.Sin(dir) * headLen);
+            var mid = new Point((tip.X + back.X) / 2, (tip.Y + back.Y) / 2);
+            double px = Math.Cos(dir + Math.PI / 2), py = Math.Sin(dir + Math.PI / 2);
+            PolygonTool.FillPolygon(surface, new List<Point>
+            {
+                tip,
+                new(mid.X + px * half * 0.6, mid.Y + py * half * 0.6),
+                back,
+                new(mid.X - px * half * 0.6, mid.Y - py * half * 0.6),
+            }, c);
+        }
+
+        /// <summary>Solid dot centred on the tip.</summary>
+        private static void DrawDotHead(RasterSurface surface, Point tip, double headLen, Color c)
+            => surface.StampCircle((int)Math.Round(tip.X), (int)Math.Round(tip.Y),
+                                   Math.Max(2, (int)Math.Round(headLen / 2)), c);
+
+        /// <summary>Flat cross-bar ("tee") across the tip, perpendicular to the line.</summary>
+        private static void DrawBarHead(RasterSurface surface, Point tip, double dir, double headLen,
+                                        int thickness, Color c)
+        {
+            double px = Math.Cos(dir + Math.PI / 2), py = Math.Sin(dir + Math.PI / 2);
+            double half = headLen * 0.55;
+            surface.DrawLine((int)Math.Round(tip.X - px * half), (int)Math.Round(tip.Y - py * half),
+                             (int)Math.Round(tip.X + px * half), (int)Math.Round(tip.Y + py * half),
+                             c, Math.Max(1, thickness));
         }
 
         /// <summary>Draws one arrowhead at tip, pointing along dir.</summary>
-        private static void DrawHead(ToolContext ctx, RasterSurface surface, Point tip, double dir,
+        private static void DrawHead(RasterSurface surface, Point tip, double dir,
                                      double headLen, int thickness, Color c, bool filled)
         {
             const double spread = Math.PI / 7;
@@ -326,56 +442,92 @@ namespace PaintClone.Tools
             var b1 = new Point(tip.X + Math.Cos(a1) * headLen, tip.Y + Math.Sin(a1) * headLen);
             var b2 = new Point(tip.X + Math.Cos(a2) * headLen, tip.Y + Math.Sin(a2) * headLen);
 
+            // Rounded, not truncated. A cast truncates *toward zero*, so the two barbs - which sit
+            // at mirrored offsets either side of the shaft - were being pulled in opposite
+            // directions by up to a pixel each, which is exactly what made the head look lopsided.
+            int tx = (int)Math.Round(tip.X), ty = (int)Math.Round(tip.Y);
+            int b1x = (int)Math.Round(b1.X), b1y = (int)Math.Round(b1.Y);
+            int b2x = (int)Math.Round(b2.X), b2y = (int)Math.Round(b2.Y);
+
             if (filled)
             {
                 PolygonTool.FillPolygon(surface, new List<Point> { tip, b1, b2 }, c);
                 // Outline it too, so a solid head still reads cleanly at small sizes where the
                 // scanline fill alone can look ragged.
-                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b1.X, (int)b1.Y, c, thickness);
-                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b2.X, (int)b2.Y, c, thickness);
-                surface.DrawLine((int)b1.X, (int)b1.Y, (int)b2.X, (int)b2.Y, c, thickness);
+                surface.DrawLine(tx, ty, b1x, b1y, c, thickness);
+                surface.DrawLine(tx, ty, b2x, b2y, c, thickness);
+                surface.DrawLine(b1x, b1y, b2x, b2y, c, thickness);
             }
             else
             {
-                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b1.X, (int)b1.Y, c, thickness);
-                surface.DrawLine((int)tip.X, (int)tip.Y, (int)b2.X, (int)b2.Y, c, thickness);
+                surface.DrawLine(tx, ty, b1x, b1y, c, thickness);
+                surface.DrawLine(tx, ty, b2x, b2y, c, thickness);
             }
         }
     }
 
     /// <summary>Five-pointed star inscribed in the dragged bounding box.</summary>
-    public class StarTool : DragShapeToolBase
+    /// <summary>
+    /// Every closed shape that's defined purely by a ring of vertices inscribed in the dragged box -
+    /// star, triangle, hexagon, heart, and so on. They all draw identically once their outline is
+    /// known (fill it, then stroke it), so the only thing that varies per shape is the list of
+    /// points, which keeps adding another shape down to adding one case in BuildPoints.
+    ///
+    /// Registered once per ShapeLibrary entry in MainWindow's tool table, and grouped behind a
+    /// single toolbox button with a flyout, the way Photoshop groups its shape tools.
+    /// </summary>
+    public class PolyShapeTool : DragShapeToolBase
     {
-        public override string Name => "Star";
-        public override string StatusHint => "Click and drag to draw a star; choose the number of points in the tool options.";
+        public ShapeDef Shape { get; }
+
+        public PolyShapeTool(ShapeDef shape) { Shape = shape; }
+
+        public override string Name => Shape.Name;
+        public override string ToolKey => Shape.Id;
+        public override string StatusHint => Shape.Id == ShapeLibrary.DefaultId
+            ? "Click and drag to draw a star; set its points, depth and angle in the tool options."
+            : $"Click and drag to draw a {Shape.Name.ToLowerInvariant()}; set its angle and line style in the tool options.";
+
         protected override void DrawPreview(ToolContext ctx, Point start, Point end, RasterSurface surface)
         {
             var (outline, fill, doFill) = ResolveColors(ctx);
             var r = NormalizedRect(start, end);
-            double cx = r.X + r.Width / 2.0, cy = r.Y + r.Height / 2.0;
-            double rx = r.Width / 2.0, ry = r.Height / 2.0;
-            // Upper bound matches what the Points dropdown actually offers - it was 12 here while
-            // the picker went to 24, so the top half of that list silently drew a 12-point star.
-            int points = Math.Max(3, Math.Min(24, ctx.StarPoints));
-            var pts = new List<Point>();
-            for (int i = 0; i < points * 2; i++)
-            {
-                // Alternate outer/inner radius to make the points; start at -90 degrees so the
-                // star sits upright rather than rotated.
-                // Inner radius shrinks as the point count rises - a fixed 0.4 makes a 12-point
-                // star look like a gear rather than a star.
-                double innerFrac = Math.Max(0.25, 0.55 - points * 0.03);
-                double frac = i % 2 == 0 ? 1.0 : innerFrac;
-                double a = -Math.PI / 2 + i * Math.PI / points;
-                pts.Add(new Point(cx + Math.Cos(a) * rx * frac, cy + Math.Sin(a) * ry * frac));
-            }
+            var pts = BuildPoints(Shape, r, ctx);
+            if (pts.Count < 3) return;
+
             if (doFill) PolygonTool.FillPolygon(surface, pts, fill);
             for (int i = 0; i < pts.Count; i++)
             {
                 var a = pts[i];
                 var b = pts[(i + 1) % pts.Count];
-                surface.DrawLine((int)a.X, (int)a.Y, (int)b.X, (int)b.Y, outline, Math.Max(1, ctx.PenSize));
+                surface.DrawLine((int)Math.Round(a.X), (int)Math.Round(a.Y),
+                                 (int)Math.Round(b.X), (int)Math.Round(b.Y), outline, Math.Max(1, ctx.PenSize));
             }
+        }
+
+        /// <summary>The outline of one shape, inscribed in r and rotated by the tool options' angle.
+        /// Shapes are authored in a -1..1 unit square (see ShapeLibrary) and scaled into the box
+        /// here, so a definition only has to describe its silhouette - never the placement,
+        /// rotation or aspect maths, which is identical for every shape.</summary>
+        internal static List<Point> BuildPoints(ShapeDef shape, Int32Rect r, ToolContext ctx)
+        {
+            double cx = r.X + r.Width / 2.0, cy = r.Y + r.Height / 2.0;
+            double rx = r.Width / 2.0, ry = r.Height / 2.0;
+
+            var unit = shape.Unit(ctx);
+            double rot = (ctx?.ShapeRotation ?? 0) * Math.PI / 180.0;
+            double cos = Math.Cos(rot), sin = Math.Sin(rot);
+
+            var pts = new List<Point>(unit.Count);
+            foreach (var u in unit)
+            {
+                // Rotate in the unit square so the shape turns about its own centre regardless of
+                // how non-square the dragged box is, then scale into that box.
+                double ux = u.X * cos - u.Y * sin;
+                double uy = u.X * sin + u.Y * cos;
+                pts.Add(new Point(cx + ux * rx, cy + uy * ry));
+            }
+            return pts;
         }
     }
 
@@ -421,6 +573,9 @@ namespace PaintClone.Tools
         {
             var from = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
             var to = _button == MouseButton.Right ? ctx.Colors.Foreground : ctx.Colors.Background;
+            // Flips which end each colour sits at without making the user swap the foreground and
+            // background colours themselves.
+            if (ctx.GradientReverse) (from, to) = (to, from);
 
             double dx = end.X - start.X, dy = end.Y - start.Y;
             double lenSq = dx * dx + dy * dy;
@@ -432,10 +587,20 @@ namespace PaintClone.Tools
             // preview layer, but on commit it's a bitmap the size of the box - so filling "the whole
             // surface" made the preview cover the entire canvas while the committed result covered
             // only the dragged area. Deriving the region from the drag itself makes both identical.
+            // "Whole canvas" paints every pixel of the layer and uses the drag purely to set the
+            // blend's direction and length; the default paints only the box that was dragged.
             var box = NormalizedRect(start, end);
-            int xStart = Math.Max(0, box.X), yStart = Math.Max(0, box.Y);
-            int xEnd = Math.Min(surface.Width, box.X + box.Width);
-            int yEnd = Math.Min(surface.Height, box.Y + box.Height);
+            int xStart, yStart, xEnd, yEnd;
+            if (ctx.GradientFillsCanvas)
+            {
+                xStart = 0; yStart = 0; xEnd = surface.Width; yEnd = surface.Height;
+            }
+            else
+            {
+                xStart = Math.Max(0, box.X); yStart = Math.Max(0, box.Y);
+                xEnd = Math.Min(surface.Width, box.X + box.Width);
+                yEnd = Math.Min(surface.Height, box.Y + box.Height);
+            }
 
             for (int y = yStart; y < yEnd; y++)
             {
@@ -748,9 +913,9 @@ namespace PaintClone.Tools
         {
             ctx.Canvas.ClearPreview();
             ctx.Canvas.PreviewSurface.Lock();
-            ctx.Canvas.PreviewSurface.AntiAlias = ctx.AntiAlias;
+            StrokeSetup.Begin(ctx, ctx.Canvas.PreviewSurface);
             DrawCurve(ctx, ctx.Canvas.PreviewSurface);
-            ctx.Canvas.PreviewSurface.AntiAlias = false;
+            StrokeSetup.End(ctx.Canvas.PreviewSurface);
             ctx.Canvas.PreviewSurface.Unlock();
         }
 
@@ -759,9 +924,9 @@ namespace PaintClone.Tools
             ctx.Canvas.ClearPreview();
             ctx.History.PushUndoState(ctx.Document, "Curve");
             ctx.Document.Surface.Lock();
-            ctx.Document.Surface.AntiAlias = ctx.AntiAlias;
+            StrokeSetup.Begin(ctx, ctx.Document.Surface);
             DrawCurve(ctx, ctx.Document.Surface);
-            ctx.Document.Surface.AntiAlias = false;
+            StrokeSetup.End(ctx.Document.Surface);
             ctx.Document.Surface.Unlock();
             ctx.Document.MarkDirty();
         }

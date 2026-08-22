@@ -25,7 +25,7 @@
                     <RotateTransform x:Name="MascotRotate" CenterX="45" CenterY="45"/>
                 </Image.RenderTransform>
             </Image>
-            <Border x:Name="SpeechBubble" Background="White" BorderBrush="#1B2A4A" BorderThickness="1.5"
+            <Border x:Name="SpeechBubble" Background="{DynamicResource PsContentBg}" BorderBrush="#1B2A4A" BorderThickness="1.5"
                     CornerRadius="6" Padding="6,4" Margin="0,4,0,0" Visibility="Collapsed" MaxWidth="120">
                 <TextBlock x:Name="SpeechText" TextWrapping="Wrap" FontSize="9" TextAlignment="Center"/>
             </Border>
@@ -36,8 +36,8 @@
             <TextBlock Text="Splash" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource PsAccent}" Margin="0,0,0,2"/>
             <TextBlock x:Name="TaglineText" FontSize="11" Foreground="{DynamicResource PsTextDim}" Margin="0,0,0,8" TextWrapping="Wrap"/>
 
-            <Border Background="White" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Padding="8,6" Margin="0,0,0,10">
-                <TextBlock x:Name="FunFactText" FontStyle="Italic" TextWrapping="Wrap" FontSize="10" Foreground="#333"/>
+            <Border Background="{DynamicResource PsContentBg}" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Padding="8,6" Margin="0,0,0,10">
+                <TextBlock x:Name="FunFactText" FontStyle="Italic" TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource PsText}"/>
             </Border>
 
             <Grid>

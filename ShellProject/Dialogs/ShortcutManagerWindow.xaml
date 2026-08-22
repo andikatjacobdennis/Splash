@@ -22,7 +22,7 @@
             </StackPanel>
         </Border>
 
-        <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="White">
+        <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="{DynamicResource PsContentBg}">
             <ListView x:Name="ShortcutList" BorderThickness="0" SelectionChanged="ShortcutList_SelectionChanged">
                 <ListView.View>
                     <GridView>

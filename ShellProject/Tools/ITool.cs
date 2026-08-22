@@ -49,6 +49,15 @@ namespace PaintClone.Tools
         /// <summary>How many points the Star tool draws.</summary>
         public int StarPoints = 5;
 
+        /// <summary>How deep a star's points cut in, as a percentage of its outer radius. 0 means
+        /// "work it out from the point count", which is what the star always did before this was
+        /// adjustable - a fixed inner radius makes a many-pointed star read as a gear.</summary>
+        public int StarInnerPercent = 0;
+
+        /// <summary>Rotation, in degrees, applied to the vertex-ring shapes (star, polygons, heart,
+        /// lightning). Applied about the shape's own centre.</summary>
+        public int ShapeRotation = 0;
+
         /// <summary>Whether the current tool draws with smoothed (anti-aliased) edges. Stored
         /// per-tool by MainWindow, since the right answer differs by tool: a pencil wants hard
         /// pixel edges, a curve usually wants smoothing.</summary>
@@ -68,6 +77,28 @@ namespace PaintClone.Tools
         /// <summary>Whether the Gradient tool dithers. Without it, a slow blend across many pixels
         /// shows visible banding, because 8-bit channels can only step in whole units.</summary>
         public bool GradientDither = true;
+
+        /// <summary>True: the gradient paints the whole layer, using the drag only to set its
+        /// direction and length. False: it paints just the box that was dragged.</summary>
+        public bool GradientFillsCanvas = false;
+
+        /// <summary>Swaps which end of the blend each colour sits at, without having to swap the
+        /// foreground and background colours themselves.</summary>
+        public bool GradientReverse = false;
+
+        /// <summary>How the outline of a stroked shape or line is broken up.</summary>
+        public LineStyle LineStyle = LineStyle.Solid;
+
+        /// <summary>Stretches the drawn runs of a dash pattern, as a percentage of their normal
+        /// length. Only meaningful when LineStyle isn't Solid.</summary>
+        public int DashLengthPercent = 100;
+
+        /// <summary>Stretches the gaps of a dash pattern, as a percentage of their normal length -
+        /// this is the "spacing" control. Only meaningful when LineStyle isn't Solid.</summary>
+        public int DashGapPercent = 100;
+
+        /// <summary>Airbrush coverage per spray tick, as a percentage of its normal density.</summary>
+        public int AirbrushFlow = 100;
 
         /// <summary>How far a pixel's colour may differ from the clicked one and still be filled by
         /// the paint bucket. 0 means an exact match - the legacy behaviour, and still the default.</summary>
@@ -133,11 +164,57 @@ namespace PaintClone.Tools
     /// <summary>Arrowhead styles offered by the Arrow tool.</summary>
     public enum ArrowStyle
     {
-        End,        // open barbs at the end point only
-        Both,       // open barbs at both ends
-        Filled,     // solid triangular head at the end
-        FilledBoth, // solid triangular heads at both ends
-        None        // plain line (useful with Shift-constrained angles)
+        End,          // open barbs at the end point only
+        Both,         // open barbs at both ends
+        Filled,       // solid triangular head at the end
+        FilledBoth,   // solid triangular heads at both ends
+        None,         // plain line (useful with Shift-constrained angles)
+        Diamond,      // solid diamond at the end
+        DiamondBoth,  // solid diamonds at both ends
+        Circle,       // solid dot at the end
+        CircleBoth,   // solid dots at both ends
+        Bar,          // flat cross-bar (a "tee") at the end
+        BarBoth,      // flat cross-bars at both ends
+    }
+
+    /// <summary>How a stroked line or shape outline is broken up. Applies to every tool that draws
+    /// an outline rather than a filled area.</summary>
+    public enum LineStyle { Solid, Dashed, Dotted, DashDot, LongDash }
+
+    public static class LineStyles
+    {
+        /// <summary>On/off run lengths for a line style, or null for solid. Scaled by the pen size
+        /// so a thick dashed line still reads as dashed rather than as a nearly-solid one - a fixed
+        /// 4px gap disappears entirely under a 12px stroke.
+        ///
+        /// dashPercent stretches the drawn runs and gapPercent the empty ones, both independently,
+        /// so the same style can be tuned from tight ticks to widely-spaced marks without needing a
+        /// separate LineStyle for each combination.</summary>
+        public static double[] PatternFor(LineStyle style, int penSize, int dashPercent = 100, int gapPercent = 100)
+        {
+            double u = System.Math.Max(1, penSize);
+            double[] baseRuns = style switch
+            {
+                LineStyle.Dashed => new[] { u * 4, u * 3 },
+                LineStyle.Dotted => new[] { u, u * 2 },
+                LineStyle.DashDot => new[] { u * 5, u * 2, u, u * 2 },
+                LineStyle.LongDash => new[] { u * 9, u * 4 },
+                _ => null,
+            };
+            if (baseRuns == null) return null;
+
+            double dashScale = System.Math.Clamp(dashPercent, 10, 500) / 100.0;
+            double gapScale = System.Math.Clamp(gapPercent, 10, 500) / 100.0;
+            var runs = new double[baseRuns.Length];
+            for (int i = 0; i < baseRuns.Length; i++)
+            {
+                // Even entries are the drawn runs, odd ones the gaps. Never let a run round to
+                // nothing, or the pattern would silently become solid (or invisible).
+                double scaled = baseRuns[i] * (i % 2 == 0 ? dashScale : gapScale);
+                runs[i] = System.Math.Max(0.5, scaled);
+            }
+            return runs;
+        }
     }
     public enum BrushShape
     {

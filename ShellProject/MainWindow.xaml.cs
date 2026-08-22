@@ -56,6 +56,19 @@ namespace PaintClone
         /// TextLayerData.AutoWidth) - grows in both directions, never wraps.</summary>
         private bool _textAutoWidth;
 
+        /// <summary>True from the moment the tool options bar is clicked until the canvas is
+        /// clicked again, so an open text box doesn't treat focus lost to the options bar as
+        /// "finished editing".
+        ///
+        /// Deliberately cleared by the next canvas click rather than on a timer. A ComboBox moves
+        /// focus into its dropdown asynchronously, *after* the click that opened it has finished
+        /// being processed - so a flag that reset itself at the end of that click was already back
+        /// to false by the time the text box lost focus, and the text got committed anyway. Nothing
+        /// is lost by holding it: clicking the canvas commits the box explicitly on its own path
+        /// (BeginTextEditing calls CommitActiveTextBox), and clicking anywhere else - a menu, the
+        /// toolbox - isn't the options bar, so it never sets this in the first place.</summary>
+        private bool _suppressTextCommit;
+
         /// <summary>-1 while creating a brand-new text layer; the index of an existing layer while
         /// re-editing one (see TextTool/BeginTextEditOnActiveLayer) - what CommitActiveTextBox uses
         /// to decide between AddTextLayer and updating that layer's TextLayerData in place.</summary>
@@ -94,6 +107,12 @@ namespace PaintClone
             };
             _history.StateChanged += (s, e) => UpdateEditMenuState();
             _selection.Changed += (s, e) => { UpdateEditMenuState(); RefreshSelectionHandles(); };
+
+            // Anything pressed in the tool options bar must not be treated as "done editing" by an
+            // open text box - see the LostKeyboardFocus handler in StartTextBoxUI. PreviewMouseDown
+            // tunnels, so this runs before the focus change the click causes; the flag is cleared
+            // once the click has been fully processed.
+            ToolOptionsPanel.PreviewMouseDown += (s, e) => _suppressTextCommit = true;
 
             HistoryPanelCtl.Initialize(_history, JumpToHistoryIndex);
 
@@ -152,18 +171,67 @@ namespace PaintClone
         /// <summary>Arrowhead styles shown in the Arrow tool's options row.</summary>
         private static readonly (ArrowStyle Style, string Glyph, string Tip)[] ArrowStyleChoices =
         {
-            (ArrowStyle.End,        "\u2192", "Open head at the end"),
-            (ArrowStyle.Both,       "\u2194", "Open heads at both ends"),
-            (ArrowStyle.Filled,     "\u27A4", "Solid head at the end"),
-            (ArrowStyle.FilledBoth, "\u2b0c", "Solid heads at both ends"),
-            (ArrowStyle.None,       "\u2015", "No head (plain line)"),
+            (ArrowStyle.End,         "\u2192", "Open head at the end"),
+            (ArrowStyle.Both,        "\u2194", "Open heads at both ends"),
+            (ArrowStyle.Filled,      "\u27A4", "Solid head at the end"),
+            (ArrowStyle.FilledBoth,  "\u2b0c", "Solid heads at both ends"),
+            (ArrowStyle.Diamond,     "\u25c6", "Diamond at the end"),
+            (ArrowStyle.DiamondBoth, "\u25c6", "Diamonds at both ends"),
+            (ArrowStyle.Circle,      "\u25cf", "Dot at the end"),
+            (ArrowStyle.CircleBoth,  "\u25cf", "Dots at both ends"),
+            (ArrowStyle.Bar,         "\u22a5", "Cross-bar at the end"),
+            (ArrowStyle.BarBoth,     "\u22a5", "Cross-bars at both ends"),
+            (ArrowStyle.None,        "\u2015", "No head (plain line)"),
         };
 
-        /// <summary>Fifty fonts that ship with, or are very commonly present on, Windows -
-        /// covering serif, sans, monospace, script and display faces. Any that turn out not to
-        /// be installed simply fall back to the system default when rendered, so an unusual
-        /// Windows configuration degrades gracefully rather than erroring.</summary>
-        private static readonly string[] CommonFontFamilies =
+        /// <summary>Every font family actually installed on this machine, sorted by name - so the
+        /// Text tool offers the real font list rather than a fixed guess at what's probably there.
+        /// Falls back to the curated list below if enumeration fails for any reason.
+        ///
+        /// Note this *finds* fonts, it doesn't install any: putting new font files on the machine
+        /// is a system-wide change (and a licensing question) that an image editor shouldn't be
+        /// making on its own. Anything installed through Windows shows up here automatically.</summary>
+        private static string[] _allFontFamilies;
+        private static string[] CommonFontFamilies
+        {
+            get
+            {
+                if (_allFontFamilies != null) return _allFontFamilies;
+                try
+                {
+                    var names = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
+                    foreach (var f in Fonts.SystemFontFamilies)
+                    {
+                        // Prefer the name in the user's own language where the family provides one.
+                        var src = f.FamilyNames;
+                        string name = null;
+                        foreach (var kv in src) { name = kv.Value; break; }
+                        var culture = System.Globalization.CultureInfo.CurrentUICulture;
+                        var tag = System.Windows.Markup.XmlLanguage.GetLanguage(culture.IetfLanguageTag);
+                        if (src.TryGetValue(tag, out var localized)) name = localized;
+                        if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+                    }
+                    if (names.Count > 0)
+                    {
+                        _allFontFamilies = new string[names.Count];
+                        names.CopyTo(_allFontFamilies);
+                        return _allFontFamilies;
+                    }
+                }
+                catch
+                {
+                    // Enumeration can fail on an unusual font configuration - fall back rather
+                    // than leaving the Text tool with no fonts at all.
+                }
+                return _allFontFamilies = FallbackFontFamilies;
+            }
+        }
+
+        /// <summary>Used only if the system font list can't be read: fifty fonts that ship with, or
+        /// are very commonly present on, Windows, covering serif, sans, monospace, script and
+        /// display faces. Any that turn out not to be installed simply fall back to the system
+        /// default when rendered, so an unusual configuration degrades gracefully.</summary>
+        private static readonly string[] FallbackFontFamilies =
         {
             "Arial", "Arial Black", "Arial Narrow", "Bahnschrift",
             "Bookman Old Style", "Calibri", "Cambria", "Candara",
@@ -244,7 +312,10 @@ namespace PaintClone
             _tools["RoundedRectangle"] = new RoundedRectangleTool();
             _tools["MagicWand"] = new MagicWandSelectTool();
             _tools["Arrow"] = new ArrowTool();
-            _tools["Star"] = new StarTool();
+            // Star and its siblings are all the same tool with a different vertex ring; they share
+            // one toolbox slot via the shape flyout (see ToolGroups below).
+            foreach (var shape in ShapeLibrary.All)
+                _tools[shape.Id] = new PolyShapeTool(shape);
             _tools["Gradient"] = new GradientTool();
 
             // classic 2-column ordering (spec section 11), with Magic Wand added as a 17th tool
@@ -271,14 +342,210 @@ namespace PaintClone
                 var btn = new ToggleButton
                 {
                     Style = (Style)FindResource("ToolButtonStyle"),
-                    Content = MakeToolIcon(iconFile, key),
-                    ToolTip = tip,
+                    ToolTip = ToolGroups.ContainsKey(key) ? GroupSlotTooltip(key, key) : tip,
                     Tag = key
                 };
-                btn.Click += (s, e) => SelectTool(key);
+                btn.Content = MakeToolButtonContent(key, iconFile);
+                WireToolButton(btn, key);
                 _toolButtons[key] = btn;
                 ToolGrid.Children.Add(btn);
             }
+        }
+
+        /// <summary>Toolbox slots that stand for a family of tools rather than one. The slot shows
+        /// whichever member is currently chosen, and a small corner marker opens the rest - the way
+        /// Photoshop groups its shape tools behind one button.</summary>
+        private static readonly Dictionary<string, string[]> ToolGroups = new()
+        {
+            ["Star"] = ShapeLibrary.All.Select(s => s.Id).ToArray(),
+        };
+
+        /// <summary>Which member of a grouped slot that slot is currently showing.</summary>
+        private readonly Dictionary<string, string> _activeGroupMember = new();
+
+        /// <summary>The slot a tool belongs to, or null if it isn't part of a group.</summary>
+        private static string GroupSlotFor(string toolKey)
+        {
+            foreach (var (slot, members) in ToolGroups)
+                if (Array.IndexOf(members, toolKey) >= 0) return slot;
+            return null;
+        }
+
+        /// <summary>A toolbox button's visual: the icon, plus - for a grouped slot - a small
+        /// triangle in the bottom-right corner marking that there are more tools behind it.</summary>
+        private UIElement MakeToolButtonContent(string slotKey, string iconFile)
+        {
+            string shown = _activeGroupMember.TryGetValue(slotKey, out var m) ? m : slotKey;
+            // A grouped slot shows the chosen shape's own generated glyph, so all hundred-odd
+            // shapes get a correct toolbox face without a hand-drawn icon each.
+            var icon = ToolGroups.ContainsKey(slotKey)
+                ? MakeShapeGlyph(shown, 20) ?? MakeToolIcon(iconFile, shown)
+                : MakeToolIcon(iconFile, shown);
+            if (!ToolGroups.ContainsKey(slotKey)) return icon;
+
+            var grid = new Grid { Width = 26, Height = 26 };
+            if (icon is FrameworkElement fe)
+            {
+                fe.HorizontalAlignment = HorizontalAlignment.Center;
+                fe.VerticalAlignment = VerticalAlignment.Center;
+            }
+            grid.Children.Add(icon);
+
+            var marker = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M0,5 L5,5 L5,0 Z"),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                IsHitTestVisible = false
+            };
+            marker.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "PsIconGlyph");
+            grid.Children.Add(marker);
+            return grid;
+        }
+
+        /// <summary>Click selects the slot's current tool; clicking its corner marker - or
+        /// right-clicking anywhere on it - opens the group's flyout instead.</summary>
+        private void WireToolButton(ToggleButton btn, string slotKey)
+        {
+            if (!ToolGroups.TryGetValue(slotKey, out var members))
+            {
+                btn.Click += (s, e) => SelectTool(slotKey);
+                return;
+            }
+
+            // The corner press is only *recorded* here and acted on when the button is released.
+            // Opening on the press doesn't work: a popup with StaysOpen=false treats the mouse-up
+            // that follows its own opening press as a click outside itself and closes again
+            // immediately, so the flyout appeared never to open at all. (Right-click below already
+            // opens on release, which is why that path worked while this one didn't.)
+            bool cornerPressed = false;
+            btn.PreviewMouseLeftButtonDown += (s, e) =>
+            {
+                // Bottom-right corner region = "show me the rest of this group".
+                var p = e.GetPosition(btn);
+                cornerPressed = p.X >= btn.ActualWidth - 12 && p.Y >= btn.ActualHeight - 12;
+                if (cornerPressed) e.Handled = true; // don't let it also select the tool
+            };
+            btn.PreviewMouseLeftButtonUp += (s, e) =>
+            {
+                if (!cornerPressed) return;
+                cornerPressed = false;
+                e.Handled = true;
+                ShowToolGroupFlyout(btn, slotKey, members);
+            };
+            btn.MouseRightButtonUp += (s, e) => { e.Handled = true; ShowToolGroupFlyout(btn, slotKey, members); };
+            btn.Click += (s, e) => SelectTool(_activeGroupMember.TryGetValue(slotKey, out var m) ? m : members[0]);
+        }
+
+        /// <summary>The group flyout. Laid out as a scrolling grid of icons rather than a list of
+        /// named rows: the shape group runs to over a hundred entries, and a single vertical column
+        /// of that many would be taller than the screen and hopeless to scan. Each cell is just the
+        /// shape's silhouette with its name on a tooltip, which is how a shape picker is normally
+        /// browsed - by eye.</summary>
+        private void ShowToolGroupFlyout(ToggleButton btn, string slotKey, string[] members)
+        {
+            const int columns = 8;
+            var grid = new UniformGrid { Columns = columns, Margin = new Thickness(3) };
+
+            var popup = new System.Windows.Controls.Primitives.Popup
+            {
+                PlacementTarget = btn,
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Right,
+                StaysOpen = false,
+                AllowsTransparency = true,
+                IsOpen = false
+            };
+
+            var scroller = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                MaxHeight = 420,
+                Content = grid
+            };
+
+            var shell = new Border { BorderThickness = new Thickness(1), Padding = new Thickness(1), Child = scroller };
+            shell.SetResourceReference(Border.BackgroundProperty, "XpFaceDark");
+            shell.SetResourceReference(Border.BorderBrushProperty, "PsAccent");
+            popup.Child = shell;
+
+            foreach (var member in members)
+            {
+                string captured = member;
+                var cell = new Button
+                {
+                    Width = 34,
+                    Height = 34,
+                    Margin = new Thickness(1),
+                    Padding = new Thickness(0),
+                    BorderThickness = new Thickness(1),
+                    ToolTip = _tools.TryGetValue(member, out var t) ? t.Name : member,
+                    Content = MakeShapeGlyph(member, 22)
+                };
+                cell.Click += (s, e) =>
+                {
+                    popup.IsOpen = false;
+                    _activeGroupMember[slotKey] = captured;
+                    // Rebuild the slot's face so it shows whichever shape was just chosen, and
+                    // re-label it to match - the tooltip was fixed at the slot's original name, so
+                    // it still read "Star" after switching the slot to a heart.
+                    btn.Content = MakeToolButtonContent(slotKey, ToolIconFileFor(slotKey));
+                    btn.ToolTip = GroupSlotTooltip(slotKey, captured);
+                    SelectTool(captured);
+                };
+                grid.Children.Add(cell);
+            }
+
+            popup.IsOpen = true;
+        }
+
+        /// <summary>A shape's toolbox glyph, generated from the shape's own outline rather than
+        /// hand-drawn. With a catalogue this size, hand-authoring an icon per shape would be both
+        /// enormous and a standing invitation for an icon to drift out of step with the shape it
+        /// claims to represent - here they cannot disagree, because they're the same points.
+        /// Falls back to the hand-drawn icon set for anything that isn't a library shape.</summary>
+        private UIElement MakeShapeGlyph(string toolKey, double size)
+        {
+            var def = ShapeLibrary.ById(toolKey);
+            if (def == null) return ToolIcons.Create(toolKey, size);
+
+            // Rendered from a neutral context so a glyph shows the shape's own form, not whatever
+            // rotation or star depth the tool options happen to be set to right now.
+            var pts = def.Unit(new ToolContext());
+            if (pts.Count < 3) return ToolIcons.Create(toolKey, size);
+
+            var figure = new PathFigure { IsClosed = true, IsFilled = false };
+            const double r = 11, c = 12; // fit the -1..1 unit square into a 24x24 box
+            figure.StartPoint = new Point(c + pts[0].X * r, c + pts[0].Y * r);
+            for (int i = 1; i < pts.Count; i++)
+                figure.Segments.Add(new LineSegment(new Point(c + pts[i].X * r, c + pts[i].Y * r), true));
+
+            var geo = new PathGeometry();
+            geo.Figures.Add(figure);
+            geo.Freeze();
+
+            var path = new System.Windows.Shapes.Path
+            {
+                Data = geo,
+                StrokeThickness = 1.3,
+                StrokeLineJoin = PenLineJoin.Round
+            };
+            path.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "PsIconGlyph");
+
+            var canvas = new Canvas { Width = 24, Height = 24 };
+            canvas.Children.Add(path);
+            return new Viewbox { Width = size, Height = size, Child = canvas, Stretch = Stretch.Uniform };
+        }
+
+        /// <summary>Icon-file fallback name for a slot (only used if a tool has no vector icon).</summary>
+        private static string ToolIconFileFor(string slotKey) => slotKey.ToLowerInvariant();
+
+        /// <summary>A grouped slot's tooltip - named for whichever member it's currently showing,
+        /// not for the slot itself, plus the hint about how to reach the others.</summary>
+        private string GroupSlotTooltip(string slotKey, string member)
+        {
+            string name = _tools.TryGetValue(member, out var t) ? t.Name : member;
+            return $"{name} - click the corner (or right-click) for more shapes";
         }
 
         private void BuildPalette()
@@ -497,7 +764,12 @@ namespace PaintClone
         {
             if (promptSave && !ConfirmDiscardChanges()) return;
 
-            _document = new PaintDocument(width, height, Colors.Transparent);
+            // Start the way a fresh document is normally expected to: an opaque white Background
+            // to paint against, plus an empty transparent layer above it which is the one selected,
+            // so the first stroke lands on its own layer instead of straight onto the background.
+            _document = new PaintDocument(width, height, Colors.White);
+            _document.Layers[0].Name = "Background";
+            _document.AddLayer("Layer 1");   // AddLayer makes the new layer active
             WireDocumentLayerEvents();
             _canvas.SetDocument(_document);
             _canvas.Zoom = _zoom;
@@ -781,7 +1053,10 @@ namespace PaintClone
             _currentToolKey = key;
             _ctx.PenSize = _toolSizes.TryGetValue(key, out var savedSize) ? savedSize : DefaultSizeForTool(key);
             _ctx.AntiAlias = _toolAntiAlias.TryGetValue(key, out var savedAA) ? savedAA : DefaultAntiAliasForTool(key);
-            foreach (var kv in _toolButtons) kv.Value.IsChecked = kv.Key == key;
+            // A tool inside a group highlights the slot it lives in, since that's the button on
+            // screen - "Heart" has no button of its own, it's shown by the shape slot.
+            string highlightKey = GroupSlotFor(key) ?? key;
+            foreach (var kv in _toolButtons) kv.Value.IsChecked = kv.Key == highlightKey;
             if (key != "Eraser") EraserOutline.Visibility = Visibility.Collapsed;
             _canvas.Cursor = GetCursorForTool(key);
 
@@ -831,16 +1106,56 @@ namespace PaintClone
                 }
             }
 
+            // Anything that drags out a shape wants the same precision cross. Tested by tool type
+            // rather than by name so the shape family (Triangle, Heart, ...) is covered without
+            // having to be re-listed here - they were falling through to a plain arrow, which is
+            // the wrong cursor for a tool you aim with.
+            if (_tools.TryGetValue(key, out var tool) && tool is DragShapeToolBase) return Cursors.Cross;
+
             return key switch
             {
                 "Text" => Cursors.IBeam,
                 "Line" or "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon" or "Curve"
-                    or "Arrow" or "Star" or "Gradient" => Cursors.Cross,
+                    or "Arrow" or "Gradient" => Cursors.Cross,
                 "Select" or "FreeFormSelect" or "MagicWand" => Cursors.Cross,
                 "Magnifier" => Cursors.Cross,
                 "Pencil" or "Brush" or "Eraser" or "Airbrush" or "Pick" => Cursors.Cross,
                 _ => Cursors.Arrow,
             };
+        }
+
+        private ScreenPickSession _screenPick;
+
+        /// <summary>Starts an off-window colour pick: the pointer is followed anywhere on screen and
+        /// the foreground colour previews live, committed on the next click or abandoned on Escape.
+        /// Only reads the single pixel under the pointer, and only for the duration of the gesture.</summary>
+        private void BeginScreenColorPick()
+        {
+            if (_screenPick != null) return; // one at a time
+            var original = _colors.Foreground;
+            string previousStatus = StatusText.Text;
+
+            _screenPick = new ScreenPickSession(
+                _canvas,
+                preview => _colors.SetForeground(preview),
+                result =>
+                {
+                    _screenPick = null;
+                    // Cancelled (Escape, or capture lost) - put back whatever colour was in use
+                    // before the preview started rather than leaving a half-finished pick applied.
+                    _colors.SetForeground(result ?? original);
+                    StatusText.Text = result.HasValue
+                        ? $"Picked {ColorManager.DescribeColor(result.Value).Split('\n')[0]} from screen."
+                        : previousStatus;
+                });
+
+            if (!_screenPick.Start())
+            {
+                _screenPick = null;
+                StatusText.Text = "Couldn't start the screen colour pick - try again.";
+                return;
+            }
+            StatusText.Text = "Move to any colour on screen, click to pick it, or press Esc to cancel.";
         }
 
         private void AfterColorPick()
@@ -1039,6 +1354,10 @@ namespace PaintClone
         {
             try
             {
+                // Back on the canvas: whatever was being adjusted in the options bar is done, so an
+                // open text box is free to commit on focus loss again (see _suppressTextCommit).
+                _suppressTextCommit = false;
+
                 if (_currentToolKey == "Polygon" && e.ClickCount >= 2)
                 {
                     ((PolygonTool)_tools["Polygon"]).Finish(_ctx);
@@ -1091,9 +1410,10 @@ namespace PaintClone
             double screenSize = size * _zoom;
             EraserOutline.Width = screenSize;
             EraserOutline.Height = screenSize;
-            EraserOutline.Margin = new Thickness(
-                (docPoint.X - size / 2.0) * _zoom,
-                (docPoint.Y - size / 2.0) * _zoom, 0, 0);
+            // Canvas.Left/Top, not Margin - a Canvas child's position doesn't feed into layout, so
+            // the outline can follow the mouse past the canvas edge without stretching it.
+            Canvas.SetLeft(EraserOutline, (docPoint.X - size / 2.0) * _zoom);
+            Canvas.SetTop(EraserOutline, (docPoint.Y - size / 2.0) * _zoom);
             EraserOutline.Visibility = Visibility.Visible;
         }
 
@@ -1221,6 +1541,12 @@ namespace PaintClone
         private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (_activeTextBox != null) return; // let typing through untouched
+
+            // Any focused text field must get its keystrokes too, not just the canvas text box.
+            // Most tool shortcuts are bare single letters (b, e, g, s, t, ...), so without this a
+            // layer being renamed silently lost every one of those characters to a tool switch -
+            // which is exactly what "some characters don't work" looked like.
+            if (Keyboard.FocusedElement is TextBox or System.Windows.Controls.Primitives.TextBoxBase) return;
 
             // While the full-screen view is up there's no editing UI to drive, so only the keys
             // that get you out of it should do anything - otherwise a stray tool shortcut would
@@ -1374,6 +1700,111 @@ namespace PaintClone
             catch { return null; }
         }
 
+        /// <summary>The Text tool's font picker: every installed family, each entry rendered in the
+        /// font it names, and type-to-search. With the full system font list this can run to
+        /// hundreds of entries, so scrolling alone isn't a reasonable way to find one - the box is
+        /// editable and filters the list to whatever has been typed, restoring the full list when
+        /// the text is cleared.</summary>
+        /// <summary>One font in the picker. A plain data object rather than a ComboBoxItem: an
+        /// editable ComboBox derives its edit-box text from the selected *item*, and using
+        /// containers as items makes it inherit that item's own font and size - which rendered the
+        /// selected font's name as unreadable specks. With a data item plus a template, the list
+        /// rows preview each face while the edit box keeps the ordinary UI font.</summary>
+        private sealed class FontRow
+        {
+            public string Name { get; init; }
+            public override string ToString() => Name;
+        }
+
+        private DataTemplate _fontRowTemplate;
+        /// <summary>A font row is drawn in the font it names, which is the point - but a symbol or
+        /// non-Latin family renders its own name as glyphs you can't read as text. The tooltip
+        /// repeats the name in the ordinary UI font, so there's always a legible way to tell what a
+        /// row actually is. The tooltip's font has to be set explicitly: tooltip content otherwise
+        /// inherits from what it's attached to, which is exactly the unreadable font in question.</summary>
+        private DataTemplate FontRowTemplate => _fontRowTemplate ??= (DataTemplate)System.Windows.Markup.XamlReader.Parse(
+            @"<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'>
+                <TextBlock Text='{Binding Name}' FontFamily='{Binding Name}' FontSize='14'>
+                  <TextBlock.ToolTip>
+                    <ToolTip FontFamily='Segoe UI' FontSize='11' Content='{Binding Name}'/>
+                  </TextBlock.ToolTip>
+                </TextBlock>
+              </DataTemplate>");
+
+        /// <summary>The Text tool's font picker: a search box feeding a dropdown of every installed
+        /// family, each row drawn in the font it names.
+        ///
+        /// The search is its own field rather than an editable ComboBox. An editable combo derives
+        /// its edit-box content from the selected item, and with rows deliberately drawn in the
+        /// fonts they name that box rendered the typed text at a few pixels tall - unreadable, and
+        /// not fixable by setting the font on the edit box. A separate field sidesteps that
+        /// entirely, and reads more clearly as "search" besides.</summary>
+        private FrameworkElement BuildFontCombo()
+        {
+            var all = CommonFontFamilies;
+
+            var combo = new ComboBox
+            {
+                Width = 172,
+                Height = 22,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                MaxDropDownHeight = 340,
+                ItemTemplate = FontRowTemplate,
+                ToolTip = "The font used for new text"
+            };
+
+            var search = new TextBox
+            {
+                Width = 86,
+                Height = 22,
+                Margin = new Thickness(0, 0, 4, 0),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                ToolTip = $"Search the {all.Length} installed fonts by name"
+            };
+
+            bool updating = false;
+
+            void Populate(string filter)
+            {
+                updating = true;
+                combo.Items.Clear();
+                foreach (var f in all)
+                {
+                    if (!string.IsNullOrEmpty(filter) &&
+                        f.IndexOf(filter, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
+                    combo.Items.Add(new FontRow { Name = f });
+                }
+                // Keep the current font showing whenever it survived the filter.
+                foreach (FontRow row in combo.Items)
+                    if (row.Name == _textFontFamily) { combo.SelectedItem = row; break; }
+                updating = false;
+            }
+
+            Populate(null);
+
+            combo.SelectionChanged += (o, e) =>
+            {
+                if (updating) return;
+                if (combo.SelectedItem is not FontRow row) return;
+                _textFontFamily = row.Name;
+                if (_activeTextBox != null) _activeTextBox.FontFamily = new FontFamily(row.Name);
+            };
+
+            search.TextChanged += (o, e) =>
+            {
+                Populate(search.Text);
+                // Show the narrowed list straight away, but don't steal the caret out of the box
+                // that's still being typed into.
+                combo.IsDropDownOpen = combo.Items.Count > 0 && search.Text.Length > 0;
+                search.Focus();
+            };
+
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            panel.Children.Add(search);
+            panel.Children.Add(combo);
+            return panel;
+        }
+
         /// <summary>A dropdown over an unbroken run of whole numbers - every value in the range, not
         /// a handful of presets. Used for the size pickers, where being able to pick (say) 7 rather
         /// than only 5 or 8 is the whole point.</summary>
@@ -1388,9 +1819,12 @@ namespace PaintClone
         private void BuildToolOptions(string key)
         {
             ToolOptionsPanel.Children.Clear();
-            bool needsSize = key is "Pencil" or "Brush" or "Eraser" or "Airbrush" or "Line" or "Rectangle"
-                or "Ellipse" or "RoundedRectangle" or "Polygon" or "Curve" or "Arrow" or "Star";
-            bool needsFill = key is "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon" or "Star";
+            // Every member of the shape family (star, triangle, heart, ...) shares one set of
+            // options, so they're tested for as a group rather than listed one by one.
+            bool isPolyShape = _tools.TryGetValue(key, out var activeTool) && activeTool is PolyShapeTool;
+            bool needsSize = isPolyShape || key is "Pencil" or "Brush" or "Eraser" or "Airbrush" or "Line"
+                or "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon" or "Curve" or "Arrow";
+            bool needsFill = isPolyShape || key is "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon";
             bool isBrush = key == "Brush";
             bool isText = key == "Text";
 
@@ -1408,6 +1842,61 @@ namespace PaintClone
                 AddOptionCombo("Head:", ArrowStyleChoices.Select(a => (a.Tip, a.Style)),
                     _ctx.ArrowStyle, v => _ctx.ArrowStyle = v, 178,
                     OptionPreviews.ArrowStylePreview);
+            }
+
+            // Line style applies to anything that strokes an outline. Filled-only shapes still show
+            // it because switching to an outline mode should not also mean re-picking the style.
+            if (isPolyShape || key is "Line" or "Curve" or "Rectangle" or "Ellipse"
+                or "RoundedRectangle" or "Polygon" or "Arrow")
+            {
+                AddOptionCombo("Line:", new[]
+                {
+                    ("Solid", LineStyle.Solid),
+                    ("Dashed", LineStyle.Dashed),
+                    ("Dotted", LineStyle.Dotted),
+                    ("Dash-dot", LineStyle.DashDot),
+                    ("Long dash", LineStyle.LongDash),
+                }, _ctx.LineStyle, v =>
+                {
+                    _ctx.LineStyle = v;
+                    // The dash length/spacing controls only exist for a broken line, so the bar has
+                    // to be rebuilt to show or hide them when the style changes.
+                    Dispatcher.BeginInvoke(new Action(() => BuildToolOptions(_currentToolKey)),
+                        System.Windows.Threading.DispatcherPriority.Input);
+                }, 118);
+
+                // Only meaningful once the line is actually broken up.
+                if (_ctx.LineStyle != LineStyle.Solid)
+                {
+                    var scales = new List<(string, int)>();
+                    for (int s = 25; s <= 300; s += 25) scales.Add(($"{s}%", s));
+
+                    AddOptionCombo("Dash:", scales, _ctx.DashLengthPercent,
+                        v => _ctx.DashLengthPercent = v, 74);
+                    AddOptionCombo("Spacing:", scales, _ctx.DashGapPercent,
+                        v => _ctx.DashGapPercent = v, 74);
+                }
+            }
+
+            if (key == "Pick")
+            {
+                AddOptionLabel("From:");
+                var screenPick = new Button
+                {
+                    Content = "Pick from screen…",
+                    Padding = new Thickness(8, 2, 8, 2),
+                    ToolTip = "Sample a colour from anywhere on screen - move to the colour you want, " +
+                              "click to take it, or press Esc to cancel"
+                };
+                screenPick.Click += (o, e) => BeginScreenColorPick();
+                AddOptionGroup(screenPick);
+            }
+
+            if (key == "Airbrush")
+            {
+                var flows = new List<(string, int)>();
+                for (int f = 10; f <= 200; f += 10) flows.Add(($"{f}%", f));
+                AddOptionCombo("Flow:", flows, _ctx.AirbrushFlow, v => _ctx.AirbrushFlow = v, 76);
             }
 
             if (key == "Fill")
@@ -1429,8 +1918,8 @@ namespace PaintClone
             // Anti-aliasing applies to any tool that draws an edge. Offered per tool (and
             // remembered per tool), since the useful default genuinely differs between, say, the
             // Pencil and the Curve.
-            if (key is "Pencil" or "Brush" or "Airbrush" or "Eraser" or "Line" or "Curve"
-                or "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon" or "Arrow" or "Star"
+            if (isPolyShape || key is "Pencil" or "Brush" or "Airbrush" or "Eraser" or "Line" or "Curve"
+                or "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon" or "Arrow"
                 or "Gradient" or "Text")
             {
                 AddOptionCombo("Edges:", new[] { ("Hard", false), ("Smooth", true) },
@@ -1453,6 +1942,21 @@ namespace PaintClone
                     _ctx.GradientType, v => _ctx.GradientType = v, 232,
                     OptionPreviews.GradientPreview);
 
+                AddOptionCombo("Area:", new[] { ("Dragged box", false), ("Whole canvas", true) },
+                    _ctx.GradientFillsCanvas, v => _ctx.GradientFillsCanvas = v, 128);
+
+                var reverse = new CheckBox
+                {
+                    Content = "Reverse",
+                    IsChecked = _ctx.GradientReverse,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 12, 0),
+                    ToolTip = "Swap which end of the blend each colour sits at"
+                };
+                reverse.Checked += (o, e) => _ctx.GradientReverse = true;
+                reverse.Unchecked += (o, e) => _ctx.GradientReverse = false;
+                AddOptionGroup(reverse);
+
                 // A plain on/off, so a checkbox rather than a two-entry dropdown.
                 var dither = new CheckBox
                 {
@@ -1472,6 +1976,20 @@ namespace PaintClone
                 for (int n = 3; n <= 24; n++) pointCounts.Add((n.ToString(), n));
                 AddOptionCombo("Points:", pointCounts, _ctx.StarPoints, v => _ctx.StarPoints = v, 74,
                     OptionPreviews.StarPointsPreview);
+
+                // How far the star's points cut in. "Auto" keeps the original behaviour of
+                // tightening as points are added, which is what stops a many-pointed star from
+                // reading as a gear.
+                var depths = new List<(string, int)> { ("Auto", 0) };
+                for (int d = 10; d <= 90; d += 5) depths.Add(($"{d}%", d));
+                AddOptionCombo("Depth:", depths, _ctx.StarInnerPercent, v => _ctx.StarInnerPercent = v, 74);
+            }
+
+            if (isPolyShape)
+            {
+                var angles = new List<(string, int)>();
+                for (int a = 0; a < 360; a += 15) angles.Add(($"{a}°", a));
+                AddOptionCombo("Angle:", angles, _ctx.ShapeRotation, v => _ctx.ShapeRotation = v, 68);
             }
 
             if (isBrush)
@@ -1495,29 +2013,7 @@ namespace PaintClone
             if (isText)
             {
                 AddOptionLabel("Font:");
-                var fontCombo = new ComboBox { Width = 150, Height = 22, VerticalContentAlignment = VerticalAlignment.Center };
-                foreach (var f in CommonFontFamilies)
-                {
-                    // Each entry is shown in the font it names, so the list previews what you're
-                    // actually choosing instead of spelling every option out in one uniform face.
-                    fontCombo.Items.Add(new ComboBoxItem
-                    {
-                        Content = f,
-                        Tag = f,
-                        FontFamily = new FontFamily(f),
-                        FontSize = 13
-                    });
-                }
-                string currentFont = CommonFontFamilies.Contains(_textFontFamily) ? _textFontFamily : CommonFontFamilies[0];
-                foreach (ComboBoxItem item in fontCombo.Items)
-                    if ((string)item.Tag == currentFont) { fontCombo.SelectedItem = item; break; }
-                fontCombo.SelectionChanged += (o, e) =>
-                {
-                    if (fontCombo.SelectedItem is not ComboBoxItem { Tag: string fam }) return;
-                    _textFontFamily = fam;
-                    if (_activeTextBox != null) _activeTextBox.FontFamily = new FontFamily(fam);
-                };
-                AddOptionGroup(fontCombo);
+                AddOptionGroup(BuildFontCombo());
 
                 AddNumberCombo("Size:", 6, 200, (int)_textFontSize, sz =>
                 {
@@ -1680,7 +2176,16 @@ namespace PaintClone
             // can be typed into, which looks exactly like "clicking the text does nothing."
             bool everFocused = false;
             _activeTextBox.GotKeyboardFocus += (s, e) => everFocused = true;
-            _activeTextBox.LostKeyboardFocus += (s, e) => { if (everFocused) CommitActiveTextBox(); };
+            _activeTextBox.LostKeyboardFocus += (s, e) =>
+            {
+                // Reaching for the options bar isn't finishing the text. Committing here is what
+                // made font, size and B/I/U impossible to change on text you were still typing:
+                // the click that opened the dropdown took focus, which committed the box, so the
+                // setting was applied to nothing. The bar's own controls all mutate _activeTextBox
+                // directly, so leaving it open is exactly what makes them work.
+                if (_suppressTextCommit) return;
+                if (everFocused) CommitActiveTextBox();
+            };
             _activeTextBox.TextChanged += (s, e) => AutoGrowTextBox();
 
             // Move handle at the top-left corner (circular, distinct from the square resize

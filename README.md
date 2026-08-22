@@ -1943,6 +1943,241 @@ app (pick a swatch then click another tool's button; perform a fill then switch;
 choose a colour, confirm, then switch) and tool switching worked every time. Left unfixed rather
 than guessing at a change, pending exact steps.
 
+### Fifty-ninth round: previews in the option dropdowns, paint-bucket options, a real eye
+
+- **Every dropdown entry that can be shown now shows itself.** Brush shapes, edges (hard vs
+  smooth), fill modes, gradient blends, arrowheads, star point counts, and connected-vs-global area
+  all render a small preview beside their name (`Services/OptionPreviews`). Wherever practical
+  these are drawn with the *tool's own code* rather than a hand-drawn lookalike: brush shapes go
+  through `BrushTool.StampShape`, edges/fill modes through `RasterSurface.DrawLine`/`DrawRect`, and
+  gradients through `GradientTool`'s own position maths. A preview drawn by a separate
+  approximation is one that can quietly stop matching what the tool really does, and a wrong
+  preview is worse than none. This needed two small refactors to share rather than duplicate: the
+  brush-shape `switch` was extracted out of `BrushTool.Deposit` into a public `StampShape`, and
+  `GradientTool.ComputeT` gained an `internal` `PositionAlong` wrapper.
+- **Previews are ImageSources, not controls** - a deliberate constraint, not an implementation
+  detail. A WPF element can have only one parent, and a ComboBox renders its selected entry a
+  second time inside the closed box, so returning live controls would throw the moment an entry
+  with a preview was selected. Bitmaps are shareable (and frozen, which the test suite asserts), so
+  the dropdown row and the closed box each draw their own. Items are plain data bound through a
+  `DataTemplate` for the same reason. A preview that fails to render is swallowed and simply
+  omitted, since the dropdown is perfectly usable with just its text.
+- **Paint bucket gained the two options it should always have had**: a Tolerance (0-255) and a
+  Connected-area/Whole-layer switch. `RasterSurface.FloodFill` now takes both, and deliberately
+  reuses the same per-channel matching rule `MagicWandSelect` already used, so a given tolerance
+  selects and fills the same pixels rather than the two tools disagreeing about "close enough".
+  One real hazard came with it: with a tolerance in play, already-filled pixels can still satisfy
+  the match test (the new colour may itself be within tolerance of the target), which would let the
+  scan revisit them forever - so the contiguous path now tracks what it has already done rather
+  than relying on the pixel test to terminate. There's a test for exactly that case.
+- **Magnifier zoom is continuous 1x-10x** (was a sparse 1/2/4/6/8 chosen to fit a row of buttons).
+- **More options**: Rounded Rectangle gained an explicit corner radius ("Auto" keeps the old
+  derive-from-size behaviour), on top of the paint bucket's two. Fixed a mismatch introduced last
+  round while here: `StarTool` clamped its point count to 12 while the new picker offered up to 24,
+  so the top half of that list silently drew a 12-point star.
+- **The layer visibility control is a real eye now** - drawn geometry in the theme's glyph colour,
+  in a borderless slot, and *absent* rather than crossed out when the layer is hidden, which is how
+  Photoshop's own panel reads. The empty slot still tints on hover so it's discoverable as a
+  control.
+
+Verified with a harness referencing the already-built assembly (so it didn't require closing the
+running app): every brush/edge/fill/gradient/arrow/star/area preview actually contains ink rather
+than coming out blank - the failure mode that would look exactly like a missing icon - that
+gradient and star previews genuinely differ per value rather than the option not reaching the
+drawing maths, that previews are frozen and therefore shareable, and the new fill's tolerance and
+contiguous/global behaviour including the non-termination case. 49/49. Also drove the running app
+through all twenty tool shortcuts again, since every options branch now builds previews too.
+
+### Sixtieth round: a shape family behind one button, and three fixes
+
+- **New documents start the way they should**: an opaque white Background plus an empty transparent
+  "Layer 1" above it, with that upper layer selected, so the first stroke lands on its own layer
+  instead of straight onto the background. (Previously a single transparent layer.)
+- **Renaming a layer swallowed characters.** `MainWindow_PreviewKeyDown` exempted the canvas text
+  box from tool shortcuts but nothing else, and most tool shortcuts are bare single letters - so
+  typing into the layer-rename field lost every b, e, g, s, t, and so on to a tool switch. It now
+  bails out whenever any text field has focus. Verified by renaming a layer to "bestgizc", eight
+  characters that are *all* tool shortcuts; all eight now register.
+- **The eraser outline stretched the canvas** when moved past its edge. The outline was positioned
+  with a `Margin`, and a margin feeds into an element's desired size - so pushing it outside grew
+  the Grid, and with it the size-to-content Border around the canvas. It now lives in a `Canvas` and
+  is placed with `Canvas.Left/Top`, which layout ignores, so it can sit anywhere without touching
+  the canvas. Confirmed by parking the pointer well outside the canvas: its size no longer changes.
+- **Eight more shapes, grouped behind one toolbox button** the way Photoshop groups its shape
+  tools: Triangle, Diamond, Pentagon, Hexagon, Octagon, Cross, Heart and Lightning Bolt now share
+  the Star slot. The slot shows whichever shape is selected and carries a small corner marker;
+  clicking that corner - or right-clicking the button - opens a flyout listing all nine with their
+  icons. `StarTool` became `PolyShapeTool`, which draws any shape defined by a ring of vertices, so
+  adding another is one case in `BuildPoints` rather than a new tool class. Shapes are authored in a
+  -1..1 unit square and scaled into the dragged box at the end, which is also what lets rotation
+  work uniformly.
+- **More shape options**: an Angle (rotation, applied about the shape's own centre) for the whole
+  family, and a Depth for the star controlling how far its points cut in - "Auto" keeps the existing
+  behaviour of tightening as points are added, which is what stops a many-pointed star reading as a
+  gear.
+
+Two things worth recording from building the flyout. First, it initially appeared not to open at
+all on a corner click, while right-click worked: a `Popup` with `StaysOpen=false` treats the
+mouse-up that follows its own opening *press* as a click outside itself and closes immediately, so
+the corner gesture now opens on release - which is what right-click was already doing, and why only
+that path worked. Second, `SelectTool` had to learn that a grouped tool highlights the slot it
+lives in rather than a button of its own, since "Heart" has no button on screen.
+
+Verified with a harness against the built assembly: every shape produces a valid outline that stays
+inside the dragged box, no two shapes produce the *same* outline (which would mean a missing case
+silently falling through to another shape), each has a toolbox icon, rotation genuinely changes the
+geometry, a deeper star really does pull its inner points closer to the centre, and a 24-point star
+has 48 vertices - it used to clamp at 12. 50/50, plus live checks of the flyout, the new-document
+layers, the rename fix and the eraser fix.
+
+### Sixty-first round: line styles, gradient scope, screen colour picking, searchable fonts
+
+- **Line styles** (Solid, Dashed, Dotted, Dash-dot, Long dash) on everything that strokes an
+  outline - line, curve, all the shapes, arrows. `RasterSurface` gained a `DashPattern` and a
+  `DashPhase`, set by the tools right before drawing exactly the way `AntiAlias` already was, so
+  every existing `DrawLine`/`DrawRect`/`DrawEllipse` call picks the style up without the pattern
+  being threaded through a dozen signatures. `DashPhase` matters more than it looks: a shape's
+  outline is stroked as many separate line calls, so without carrying the phase across them each
+  edge of a rectangle would restart its dash and no two corners would match. Patterns scale with
+  pen size - a fixed 4px gap vanishes entirely under a 12px stroke.
+- **Six more arrowheads**: diamond, dot and cross-bar, each at one end or both. These are shapes
+  centred on the tip rather than barbs swept back from it, so they're drawn separately from the
+  existing head geometry.
+- **Gradient**: choose whether it fills just the dragged box or the whole canvas (using the drag
+  only for direction and length), plus a Reverse that swaps which end each colour sits at without
+  making you swap the foreground and background colours themselves.
+- **Airbrush Flow** (10-200%) scales how much each spray tick lays down, so colour can be built up
+  gradually rather than only at one fixed density.
+- **Pick colour from anywhere on screen** (`Services/ScreenColorPicker`): the eyedropper gained a
+  "Pick from screen…" button that follows the pointer outside the window, previewing the colour
+  live and committing on the next click, or cancelling on Escape. Mouse capture is what makes it
+  work off-window at all - without it the app stops seeing the pointer the moment it leaves - and
+  capture is released on every exit path including Escape and losing it to something else, since a
+  stuck capture would leave the whole app unclickable. It reads a single pixel at a time, only
+  during the gesture; nothing is captured or stored.
+- **All installed fonts, with search.** The Text tool listed a hardcoded fifty; it now enumerates
+  every family actually installed, with a search box beside the dropdown that filters as you type.
+  Worth being explicit: this *finds* fonts, it does not install any - putting font files on the
+  machine is a system-wide change and a licensing question that an image editor shouldn't decide on
+  its own. Anything installed through Windows appears here automatically.
+- **Cursors**: the shape family fell through to a plain arrow because the cursor map listed tools
+  by name and the new shapes weren't in it. It now tests the tool's *type*, so anything that drags
+  out a shape gets the precision cross without needing to be re-listed.
+- **The shape slot's tooltip** still said "Star" after switching it to a heart - it was fixed at
+  the slot's original name. It's now rebuilt from whichever member is showing.
+
+Two things found by looking rather than reasoning. The font dropdown initially used `ComboBoxItem`
+objects as the items of an *editable* ComboBox; because each row is deliberately drawn in the font
+it names, the edit box inherited that and rendered the typed text a few pixels tall - unreadable.
+Switching to data items with a template fixed the rows but not the edit box, and pinning the font
+on the edit box in the ComboBox template didn't either, so the editable combo was abandoned for a
+plain dropdown with its own search field - which sidesteps the problem entirely and reads more
+clearly as "search" anyway. Second, `CurveTool` and `PolygonTool` aren't part of `DragShapeToolBase`
+but do stroke outlines, so the stroke setup had to be a free-standing helper rather than a member
+of that hierarchy.
+
+Verified with a harness against the built assembly: each line style draws and leaves progressively
+more gap than solid, dotted is sparser than dashed (they'd be identical if the pattern were being
+ignored), patterns scale with pen size, and clearing the pattern restores a solid line - that last
+one guarding against a dash leaking into later drawing. Plus gradient scope (dragged box paints
+part of the layer, whole-canvas paints every pixel) and reverse actually swapping the ends, and all
+eleven arrowheads drawing. 27/27, followed by a live sweep of all twenty tools' options.
+
+### Sixty-second round: dash spacing, a genuinely lopsided arrowhead, and text you can restyle while typing
+
+- **Dash length and spacing** are now separate controls, shown only once the line style isn't
+  Solid. They scale the drawn runs and the gaps independently, so one style covers everything from
+  tight ticks to widely-spaced marks without needing a `LineStyle` per combination. Neither can
+  round a run down to nothing, which would silently turn the pattern solid or invisible.
+- **The arrowhead really was lopsided, and for a specific reason**: the barb endpoints were cast to
+  `int`, and a cast truncates *toward zero*. The two barbs sit at mirrored offsets either side of
+  the shaft, so truncation pulled them in opposite directions - up to a pixel each, in opposite
+  senses. Rounding fixes it, and a test now asserts a horizontal arrow's head is pixel-exactly
+  mirror-symmetric for the barbed, filled, diamond and bar heads.
+  One caveat worth stating plainly: with an **even** pen size the whole arrow - shaft included - is
+  still half a pixel off centre, because an even-sized square stamp cannot be centred on a pixel
+  row. That's inherent to the raster engine and affects every thick line, not just arrowheads; the
+  head is symmetric *relative to its shaft* either way. (This is what the symmetry test initially
+  appeared to catch, before isolating it with an odd pen size.)
+- **Dashes no longer break up the arrowhead.** The pattern belongs to the shaft; a dashed head just
+  looks like a broken one, so it's suppressed for the head and restored afterwards.
+- **Help text was invisible in the dark theme.** Several dialogs - Help Topics worst, since it's
+  almost entirely text - had panels hardcoded to `Background="White"` while their text used the
+  theme's light foreground. Those now use the themed content background, and the leftover hardcoded
+  navy/grey foregrounds became theme resources.
+- **Font and size now apply to text you're still typing.** This was the most substantive fix here.
+  The live text box commits on losing keyboard focus, so the very click that opened the font or size
+  dropdown committed it first - the setting then applied to nothing. Clicks in the options bar are
+  now excluded from that. The first attempt cleared the exclusion at the end of the click and did
+  *not* work: a ComboBox moves focus into its dropdown asynchronously, after that click is done, so
+  the flag was already back off by the time focus actually left. It's now cleared by the next
+  *canvas* click instead, which is when adjusting options is genuinely finished. Nothing is lost by
+  holding it: clicking the canvas commits the box on its own path anyway, and clicking a menu or the
+  toolbox never sets it. Verified live - typing "Hello", then changing size to 32 and the font to
+  Georgia, restyles the text in place with no text layer committed behind it.
+- **Font rows now carry a tooltip with their own name in the UI font.** Each row is drawn in the
+  font it names, which means a symbol or non-Latin family renders its own name as glyphs you can't
+  read. The tooltip's font is set explicitly, since tooltip content otherwise inherits from what
+  it's attached to - which is precisely the unreadable font.
+- The font search was re-checked live and does filter (typing "geo" narrows to Georgia); the
+  earlier report most likely predated the switch away from the editable ComboBox.
+
+Verified with a harness: wider spacing draws less ink and tighter draws more, longer dashes draw
+more and shorter less, spacing works for dotted as well as dashed, extreme settings never collapse
+to solid or to nothing, Solid ignores both controls - and the arrowhead symmetry checks above,
+including that a dashed arrow still has a solid symmetric head. 17/17, plus the live text checks.
+
+### Sixty-third round: a 100-shape catalogue, and dashes that reach the curved shapes
+
+- **The arrowhead dropdown previewed the wrong head.** The preview drew its own simplified barbed
+  head for *every* entry, so diamond, dot and cross-bar all showed a barbed arrow - the shape drawn
+  on the canvas was right, only the picture beside its name was wrong. The head drawing is now a
+  shared `ArrowTool.DrawHeadsFor` used by both the tool and the preview, so they cannot disagree.
+  A test asserts all eleven entries now preview differently from one another.
+- **Dashes never reached the ellipse or the rounded rectangle.** Both draw their outlines by
+  stamping pixels directly - the ellipse by parametric sampling, the rounded rect by scanning for
+  boundary pixels - so neither ever called `DrawLine`, which is where the dash engine lives. The
+  line-style option was present and simply did nothing for them. Both now walk their real outline
+  as short segments through `DrawLine` when a pattern is set (the ellipse as an arc, the rounded
+  rect as four edges joined by four quarter-arcs), keeping the existing pixel paths untouched for
+  the solid case. `DrawRect` also had its dash phase reset per edge and per thickness pass: letting
+  it run on left the four sides meeting mid-dash and the parallel lines of a thick border offset
+  from each other.
+- **Over a hundred shapes** behind the shape slot (103), in `Tools/ShapeLibrary`. Most are generated
+  from families rather than written out - regular polygons 3-20, stars at every point count, sharp
+  and blunt star variants, bursts, block arrows in eight directions, chevrons, crosses - alongside
+  one-off silhouettes (heart, cloud, shield, banner, ribbon, tag, bookmark, moon, teardrop, leaf,
+  egg, gear, flowers, zigzag, wave, pie segments...). `PolyShapeTool` now takes a `ShapeDef` instead
+  of an enum, so adding a shape is one entry and nothing else.
+  **The flyout became a scrolling grid** rather than a list: a hundred named rows would be taller
+  than the screen and hopeless to scan, whereas a shape picker is browsed by eye. Each cell is the
+  silhouette with its name on a tooltip.
+  **Icons are generated from each shape's own outline**, not hand-drawn - with a catalogue this
+  size, per-shape icons would be enormous to author and a standing invitation for an icon to drift
+  out of step with the shape it represents. Here they are literally the same points.
+- **Line style, dash length and spacing now apply to the whole shape family**, not just the
+  original few - they were already wired to `isPolyShape`, and with the ellipse/rounded-rect fixes
+  above every stroked shape honours them for real.
+- **The Help window's selected topic was unreadable.** `TreeViewItem` was only recoloured, so it
+  still painted its selected row with the *system* highlight and system highlight text - neither of
+  which follows the app theme. It's now fully retemplated and selects with the same accent tint
+  every other list uses. Several dialogs (Help worst, being almost all text) also still had panels
+  hardcoded to `Background="White"` under theme-coloured light text; those now use the themed
+  content background.
+
+The harness caught three real defects in the new catalogue before it shipped: the egg's taper and
+the cloud's outer lobes both overshot the unit square, which would have drawn outside the rectangle
+that was dragged, and a fixed 5-point star duplicated the adjustable Star exactly. The overshoot
+was fixed systemically - every silhouette is normalised into the unit square, so the whole class of
+bug is closed rather than those two instances - and the redundant star was dropped. Final run:
+103 shapes, all with unique ids, all inside their box, none sharing an outline with another, all
+filling real pixels, rotation affecting every one; plus the arrow-preview and dashed
+ellipse/rounded-rect checks. 114/114, with live checks of the grid flyout and the Help window.
+
+One honest limitation: at 22px the many-sided polygons (roughly 14 sides and up) are visually
+almost indistinguishable from each other and from a circle. Their tooltips name them exactly, but
+the glyphs alone won't tell them apart - that's inherent to the shapes, not a rendering fault.
+
 ## How to build
 
 Requires Windows + .NET 10 SDK (WPF is Windows-only; this will not build on Linux/macOS).

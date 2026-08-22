@@ -328,8 +328,14 @@
                             <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}"
                                                ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                                Margin="6,3,20,3" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                            <!-- Font is pinned rather than inherited. An editable ComboBox's edit
+                                 box otherwise picks up whatever the ComboBox's items carry, and a
+                                 font picker whose rows are each drawn in the font they name made
+                                 the typed text render at a few pixels tall - unreadable. -->
                             <TextBox x:Name="PART_EditableTextBox" Visibility="Hidden" Background="Transparent"
                                      Foreground="{DynamicResource PsText}" Focusable="True"
+                                     FontFamily="Segoe UI" FontSize="11"
+                                     VerticalContentAlignment="Center"
                                      IsReadOnly="{TemplateBinding IsReadOnly}" Margin="6,3,20,3"/>
                             <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
                                    AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
@@ -444,9 +450,79 @@
             <Setter Property="BorderThickness" Value="0"/>
         </Style>
 
+        <!-- Fully retemplated rather than just recoloured. Left to its defaults a TreeViewItem
+             paints its selected row with the *system* highlight colour and system highlight text -
+             neither of which follows the app theme, so the topic selected when Help first opens
+             came up as an unreadable combination (in the dark theme, dark system text on a pale
+             system highlight). Selection now uses the same accent tint every other list here does. -->
         <Style TargetType="TreeViewItem">
             <Setter Property="Foreground" Value="{DynamicResource PsText}"/>
             <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="3,2"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TreeViewItem">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <ToggleButton x:Name="Expander" Focusable="False" ClickMode="Press"
+                                          VerticalAlignment="Center" HorizontalAlignment="Center"
+                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent" Width="16" Height="16">
+                                            <Path x:Name="Arrow" Width="6" Height="8" Stretch="Fill"
+                                                  Data="M0,0 L6,4 L0,8 Z" Fill="{DynamicResource PsTextDim}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  RenderTransformOrigin="0.5,0.5"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Arrow" Property="RenderTransform">
+                                                    <Setter.Value><RotateTransform Angle="90"/></Setter.Value>
+                                                </Setter>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <Border x:Name="Bd" Grid.Column="1" Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                                <ContentPresenter x:Name="PART_Header" ContentSource="Header"
+                                                   TextElement.Foreground="{TemplateBinding Foreground}"/>
+                            </Border>
+
+                            <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Grid.Column="1"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="Expander" Property="Visibility" Value="Hidden"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource PsHover}"/>
+                            </Trigger>
+                            <!-- Last, so it wins over hover: a selected row keeps the accent tint
+                                 with ordinary body text on top, readable in either theme. -->
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource PsAccentSoft}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource PsText}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="TabControl">

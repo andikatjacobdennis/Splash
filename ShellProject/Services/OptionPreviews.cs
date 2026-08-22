@@ -156,44 +156,26 @@ namespace PaintClone.Services
             return Finish(s);
         }
 
-        /// <summary>A short line carrying the chosen arrowhead style.</summary>
+        /// <summary>A short line carrying the chosen arrowhead style, drawn with ArrowTool's own
+        /// head code so the dropdown shows the head you'll actually get. An earlier version drew a
+        /// barbed head for every entry, which meant diamond, dot and bar all previewed as something
+        /// they aren't.</summary>
         public static ImageSource ArrowStylePreview(ArrowStyle style)
         {
-            const int w = 30, h = 16;
+            const int w = 34, h = 18;
             var s = Blank(w, h);
             var c = GlyphColor();
             s.Lock();
             try
             {
                 int y = h / 2;
-                s.DrawLine(3, y, w - 4, y, c, 1);
-                bool filled = style is ArrowStyle.Filled or ArrowStyle.FilledBoth;
-                bool both = style is ArrowStyle.Both or ArrowStyle.FilledBoth;
-                if (style != ArrowStyle.None)
-                {
-                    Head(s, w - 4, y, -1, c, filled);
-                    if (both) Head(s, 3, y, +1, c, filled);
-                }
+                var start = new Point(3, y);
+                var end = new Point(w - 4, y);
+                s.DrawLine((int)start.X, (int)start.Y, (int)end.X, (int)end.Y, c, 1);
+                ArrowTool.DrawHeadsFor(s, style, start, end, 0 /* pointing right */, 7, 1, c);
             }
             finally { s.Unlock(); }
             return Finish(s);
-
-            static void Head(RasterSurface s, int tipX, int y, int dir, Color c, bool filled)
-            {
-                int bx = tipX + dir * 6;
-                if (filled)
-                {
-                    PolygonTool.FillPolygon(s, new List<Point>
-                    {
-                        new(tipX, y), new(bx, y - 4), new(bx, y + 4)
-                    }, c);
-                }
-                else
-                {
-                    s.DrawLine(tipX, y, bx, y - 4, c, 1);
-                    s.DrawLine(tipX, y, bx, y + 4, c, 1);
-                }
-            }
         }
 
         /// <summary>Contiguous vs global: one connected blob, or scattered matching patches.</summary>

@@ -186,7 +186,10 @@ namespace PaintClone.Tools
         {
             var c = ActiveColor(ctx, e.Button);
             int radius = Math.Max(2, ctx.PenSize);
-            int dots = radius * 2;
+            // Flow scales how many dots each tick lays down - low flow builds up colour gradually
+            // as you hold or pass over an area, high flow covers almost immediately. At least one
+            // dot always lands, so the lowest setting still paints rather than doing nothing.
+            int dots = Math.Max(1, radius * 2 * Math.Clamp(ctx.AirbrushFlow, 1, 200) / 100);
             ctx.Document.Surface.Lock();
             for (int i = 0; i < dots; i++)
             {

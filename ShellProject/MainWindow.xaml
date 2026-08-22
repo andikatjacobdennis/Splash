@@ -188,9 +188,18 @@
                                      either - see MainWindow.StartTextBoxUI/CommitActiveTextBox. -->
                                 <Canvas x:Name="TextOverlayLayer" IsHitTestVisible="False"/>
                                 <Canvas x:Name="HandleLayer"/>
-                                <Rectangle x:Name="EraserOutline" Stroke="Black" StrokeThickness="1" Fill="Transparent"
-                                           IsHitTestVisible="False" Visibility="Collapsed"
-                                           HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                <!-- The eraser outline lives in a Canvas and is placed with
+                                     Canvas.Left/Top rather than a Margin. A Margin contributes to
+                                     an element's desired size, so pushing it past the canvas edge
+                                     grew this Grid - and with it the size-to-content Border around
+                                     it - making the whole canvas visibly balloon whenever the
+                                     eraser strayed outside. A Canvas child's position is ignored
+                                     when measuring, so it can sit anywhere, including off-canvas,
+                                     without touching the layout. -->
+                                <Canvas x:Name="EraserLayer" IsHitTestVisible="False" ClipToBounds="False">
+                                    <Rectangle x:Name="EraserOutline" Stroke="Black" StrokeThickness="1" Fill="Transparent"
+                                               IsHitTestVisible="False" Visibility="Collapsed"/>
+                                </Canvas>
                             </Grid>
                         </Border>
                     </Grid>

@@ -13,7 +13,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="White" Margin="0,0,0,8">
+        <Border Grid.Row="0" BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="{DynamicResource PsContentBg}" Margin="0,0,0,8">
             <ListBox x:Name="PresetList" BorderThickness="0" SelectionChanged="PresetList_SelectionChanged"/>
         </Border>
 

@@ -445,7 +445,66 @@ namespace PaintClone.Models
             }
         }
 
+        /// <summary>Dash pattern currently applied to stroked output, as on/off run lengths in
+        /// pixels, or null for a solid stroke. Set by the tools immediately before drawing (the
+        /// same way AntiAlias is) so every existing DrawLine/DrawRect/DrawEllipse call picks the
+        /// style up without needing the pattern threaded through its signature - which matters
+        /// because outlines are stroked from a dozen different places.</summary>
+        public double[] DashPattern { get; set; }
+
+        /// <summary>Running distance along the current stroke, so a dash pattern continues across
+        /// the many separate DrawLine calls a shape's outline is made of instead of restarting -
+        /// otherwise every edge of a rectangle would begin with a fresh dash and the corners would
+        /// all look different. Tools reset this once before drawing a shape.</summary>
+        public double DashPhase { get; set; }
+
+        /// <summary>Draws a line honouring <see cref="DashPattern"/>, walking the line and emitting
+        /// only the "on" runs. Falls straight through to the solid path when no pattern is set.</summary>
+        private void DrawLineDashed(int x0, int y0, int x1, int y1, Color c, int size)
+        {
+            var pattern = DashPattern;
+            double total = 0;
+            foreach (var p in pattern) total += p;
+            if (total <= 0) { DrawLineSolid(x0, y0, x1, y1, c, size); return; }
+
+            double dx = x1 - x0, dy = y1 - y0;
+            double len = Math.Sqrt(dx * dx + dy * dy);
+            if (len < 0.0001) { DrawLineSolid(x0, y0, x1, y1, c, size); return; }
+            double ux = dx / len, uy = dy / len;
+
+            double travelled = 0;
+            while (travelled < len)
+            {
+                // Where in the repeating pattern this point falls, and how far until it changes.
+                double phase = (DashPhase + travelled) % total;
+                int idx = 0;
+                double acc = 0;
+                while (idx < pattern.Length && phase >= acc + pattern[idx]) { acc += pattern[idx]; idx++; }
+                if (idx >= pattern.Length) idx = pattern.Length - 1;
+
+                double remain = Math.Max(0.5, acc + pattern[idx] - phase);
+                double segLen = Math.Min(remain, len - travelled);
+
+                if (idx % 2 == 0) // even entries are the "on" runs
+                {
+                    int sx = (int)Math.Round(x0 + ux * travelled);
+                    int sy = (int)Math.Round(y0 + uy * travelled);
+                    int ex = (int)Math.Round(x0 + ux * (travelled + segLen));
+                    int ey = (int)Math.Round(y0 + uy * (travelled + segLen));
+                    DrawLineSolid(sx, sy, ex, ey, c, size);
+                }
+                travelled += segLen;
+            }
+            DashPhase += len;
+        }
+
         public void DrawLine(int x0, int y0, int x1, int y1, Color c, int size)
+        {
+            if (DashPattern != null) { DrawLineDashed(x0, y0, x1, y1, c, size); return; }
+            DrawLineSolid(x0, y0, x1, y1, c, size);
+        }
+
+        private void DrawLineSolid(int x0, int y0, int x1, int y1, Color c, int size)
         {
             if (AntiAlias) { DrawLineAA(x0, y0, x1, y1, c, size); return; }
             int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
@@ -469,13 +528,23 @@ namespace PaintClone.Models
                     for (int x = r.X; x < r.X + r.Width; x++)
                         SetPixel(x, y, fillColor);
             }
+            // Each edge, and each pass of a thick border, restarts the dash from the same phase.
+            // Letting the phase run on instead would leave the four edges meeting at corners
+            // mid-dash and the parallel lines of a thick border offset from one another, which
+            // reads as a ragged border rather than a dashed one.
+            double phase0 = DashPhase;
             for (int t = 0; t < thickness; t++)
             {
+                DashPhase = phase0;
                 DrawLine(r.X, r.Y + t, r.X + r.Width - 1, r.Y + t, outline, 1);
+                DashPhase = phase0;
                 DrawLine(r.X, r.Y + r.Height - 1 - t, r.X + r.Width - 1, r.Y + r.Height - 1 - t, outline, 1);
+                DashPhase = phase0;
                 DrawLine(r.X + t, r.Y, r.X + t, r.Y + r.Height - 1, outline, 1);
+                DashPhase = phase0;
                 DrawLine(r.X + r.Width - 1 - t, r.Y, r.X + r.Width - 1 - t, r.Y + r.Height - 1, outline, 1);
             }
+            DashPhase = phase0;
         }
 
         /// <summary>Anti-aliased ellipse outline: shades each pixel by how far its centre sits
@@ -525,6 +594,16 @@ namespace PaintClone.Models
                 }
             }
 
+            // A dashed outline is walked as short segments through DrawLine, which is where the
+            // dash engine lives. The plain paths below stamp pixels directly and have no notion of
+            // distance along the curve, so a dash pattern was simply ignored for ellipses - the
+            // option appeared to do nothing at all.
+            if (DashPattern != null)
+            {
+                DrawEllipseOutlineDashed(cx, cy, rx, ry, outline, thickness);
+                return;
+            }
+
             if (AntiAlias)
             {
                 DrawEllipseOutlineAA(cx, cy, rx, ry, outline, thickness);
@@ -543,6 +622,57 @@ namespace PaintClone.Models
             }
         }
 
+        /// <summary>Rounded-rectangle outline as a real path - straight edges joined by quarter-arc
+        /// corners - drawn through DrawLine so the dash pattern carries continuously around it.</summary>
+        private void DrawRoundedRectOutlineDashed(Int32Rect r, int rad, Color c, int thickness)
+        {
+            int x0 = r.X, y0 = r.Y, x1 = r.X + r.Width - 1, y1 = r.Y + r.Height - 1;
+            int w = Math.Max(1, thickness);
+
+            void Arc(double ccx, double ccy, double from, double to)
+            {
+                int steps = Math.Max(4, (int)(Math.Abs(to - from) * rad));
+                int px = (int)Math.Round(ccx + rad * Math.Cos(from));
+                int py = (int)Math.Round(ccy + rad * Math.Sin(from));
+                for (int i = 1; i <= steps; i++)
+                {
+                    double a = from + (to - from) * i / steps;
+                    int x = (int)Math.Round(ccx + rad * Math.Cos(a));
+                    int y = (int)Math.Round(ccy + rad * Math.Sin(a));
+                    DrawLine(px, py, x, y, c, w);
+                    px = x; py = y;
+                }
+            }
+
+            DrawLine(x0 + rad, y0, x1 - rad, y0, c, w);                              // top
+            Arc(x1 - rad, y0 + rad, -Math.PI / 2, 0);                                // top-right
+            DrawLine(x1, y0 + rad, x1, y1 - rad, c, w);                              // right
+            Arc(x1 - rad, y1 - rad, 0, Math.PI / 2);                                 // bottom-right
+            DrawLine(x1 - rad, y1, x0 + rad, y1, c, w);                              // bottom
+            Arc(x0 + rad, y1 - rad, Math.PI / 2, Math.PI);                           // bottom-left
+            DrawLine(x0, y1 - rad, x0, y0 + rad, c, w);                              // left
+            Arc(x0 + rad, y0 + rad, Math.PI, Math.PI * 1.5);                         // top-left
+        }
+
+        /// <summary>Ellipse outline drawn as a chain of short line segments, so the dash pattern -
+        /// which is applied by DrawLine and measured in distance travelled - carries continuously
+        /// around the curve.</summary>
+        private void DrawEllipseOutlineDashed(double cx, double cy, double rx, double ry, Color c, int thickness)
+        {
+            // Enough segments that each is around a pixel long, so the curve stays smooth and the
+            // dash boundaries land where the pattern says rather than at segment joins.
+            int steps = Math.Max(64, (int)(2 * Math.PI * Math.Max(rx, ry)));
+            int px = (int)Math.Round(cx + rx), py = (int)Math.Round(cy);
+            for (int i = 1; i <= steps; i++)
+            {
+                double a = 2 * Math.PI * i / steps;
+                int x = (int)Math.Round(cx + rx * Math.Cos(a));
+                int y = (int)Math.Round(cy + ry * Math.Sin(a));
+                DrawLine(px, py, x, y, c, Math.Max(1, thickness));
+                px = x; py = y;
+            }
+        }
+
         public void DrawRoundedRect(Int32Rect r, int cornerRadius, Color outline, int thickness, bool fill, Color fillColor)
         {
             int rad = Math.Max(0, Math.Min(cornerRadius, Math.Min(r.Width, r.Height) / 2));
@@ -556,6 +686,15 @@ namespace PaintClone.Models
                     }
                 }
             }
+            // Same reasoning as the ellipse: the pixel scan below has no notion of distance along
+            // the outline, so a dash pattern would be ignored. Walk the real outline instead -
+            // four straight edges joined by four corner arcs - through DrawLine.
+            if (DashPattern != null)
+            {
+                DrawRoundedRectOutlineDashed(r, rad, outline, thickness);
+                return;
+            }
+
             int steps = Math.Max(64, 4 * (r.Width + r.Height));
             // Approximate outline: walk the boundary of the rounded-rect region.
             for (int y = r.Y; y < r.Y + r.Height; y++)

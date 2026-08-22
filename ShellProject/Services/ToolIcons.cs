@@ -162,6 +162,19 @@ namespace PaintClone.Services
                 new Part { Data = "M11.5,4.6 L19.6,4.4 L19.4,12.5", Thickness = 1.8 },
             },
 
+            // The rest of the shape family that shares the Star slot's flyout.
+            ["Triangle"] = new[] { new Part { Data = "M12,3.5 L20.8,19.5 H3.2 Z" } },
+            ["Diamond"] = new[] { new Part { Data = "M12,3 L20.5,12 L12,21 L3.5,12 Z" } },
+            ["Pentagon"] = new[] { new Part { Data = "M12,3.2 L20.6,9.4 L17.3,19.6 H6.7 L3.4,9.4 Z" } },
+            ["Hexagon"] = new[] { new Part { Data = "M12,3 L20,7.5 V16.5 L12,21 L4,16.5 V7.5 Z" } },
+            ["Octagon"] = new[] { new Part { Data = "M8.4,3.5 H15.6 L20.5,8.4 V15.6 L15.6,20.5 H8.4 L3.5,15.6 V8.4 Z" } },
+            ["Cross"] = new[] { new Part { Data = "M9.2,3.4 H14.8 V9.2 H20.6 V14.8 H14.8 V20.6 H9.2 V14.8 H3.4 V9.2 H9.2 Z" } },
+            ["Heart"] = new[]
+            {
+                new Part { Data = "M12,20.6 C5,15.6 3,11.9 3,9.1 A4.6,4.6 0 0 1 12,7.3 A4.6,4.6 0 0 1 21,9.1 C21,11.9 19,15.6 12,20.6 Z" },
+            },
+            ["Lightning"] = new[] { new Part { Data = "M13.6,2.4 L4.8,13.2 H10.4 L8.9,21.6 L19.2,10.2 H13.1 Z" } },
+
             ["Gradient"] = new[]
             {
                 new Part { Data = "M3.5,6 H20.5 V18 H3.5 Z", GradientFill = true },
