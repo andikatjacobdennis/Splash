@@ -8,11 +8,13 @@
             <Button x:Name="DeleteBtn" Content="Del" Width="34" Margin="0,0,3,3" Click="DeleteLayer_Click" ToolTip="Delete the active layer"/>
             <Button x:Name="UpBtn" Content="&#9650;" Width="26" Margin="0,0,3,3" Click="MoveUp_Click" ToolTip="Move layer up"/>
             <Button x:Name="DownBtn" Content="&#9660;" Width="26" Margin="0,0,3,3" Click="MoveDown_Click" ToolTip="Move layer down"/>
-            <Button x:Name="MergeBtn" Content="Merge" Width="44" Margin="0,0,3,3" Click="MergeDown_Click" ToolTip="Merge down into the layer below"/>
+            <Button x:Name="MergeBtn" Content="Merge" Width="46" Margin="0,0,3,3" Click="MergeDown_Click"
+                    ToolTip="Merge the checked layers together (or, with none checked, the active layer into the one below)"/>
             <Button x:Name="RasterizeBtn" Content="Rasterize" Width="56" Margin="0,0,0,3" Click="Rasterize_Click"
                     ToolTip="Convert this text layer to ordinary pixels - it stops being re-editable"/>
         </WrapPanel>
-        <TextBlock DockPanel.Dock="Top" Text="Click a layer to make it active. Checkbox toggles visibility. Click into a text layer ([T]) with the Text tool to edit it again."
+        <TextBlock DockPanel.Dock="Top"
+                   Text="Click a layer to make it active, double-click its name to rename. Check several, then Merge, to combine them. The eye toggles visibility."
                    FontSize="9" Foreground="{DynamicResource PsTextDim}" Margin="2,4,0,4" TextWrapping="Wrap"/>
         <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="{DynamicResource PsContentBg}">
             <ListBox x:Name="LayersList" BorderThickness="0" Background="Transparent"/>

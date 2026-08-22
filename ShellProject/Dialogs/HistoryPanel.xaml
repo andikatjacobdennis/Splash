@@ -3,9 +3,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Segoe UI" FontSize="11">
     <DockPanel Margin="6">
-        <TextBlock DockPanel.Dock="Top" Text="Click a step to jump to it. Right-click to delete it."
+        <TextBlock DockPanel.Dock="Top" Text="Click a step to jump to it. Select one and press Delete (or right-click it) to remove it."
                    FontSize="9" Foreground="{DynamicResource PsTextDim}" Margin="2,0,0,4" TextWrapping="Wrap"/>
-        <TextBlock DockPanel.Dock="Bottom" Text="Steps can be deleted but not reordered - each one depends on the exact sequence that produced it."
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
+            <Button x:Name="DeleteStepBtn" Content="Delete Step" Width="80" Margin="0,0,4,0" Click="DeleteStep_Click"
+                    ToolTip="Remove the selected step from the history"/>
+            <Button x:Name="ClearStepsBtn" Content="Clear" Width="52" Click="ClearSteps_Click"
+                    ToolTip="Discard the whole history, keeping the picture exactly as it is now"/>
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Bottom" Text="Steps can be deleted but not reordered - each records the whole picture at that point, so a different order would describe something that never happened."
                    FontSize="8" Foreground="{DynamicResource PsTextDim}" Margin="2,4,0,0" TextWrapping="Wrap"/>
         <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="{DynamicResource PsContentBg}">
             <ListBox x:Name="HistoryList" BorderThickness="0" Background="Transparent" SelectionChanged="HistoryList_SelectionChanged"

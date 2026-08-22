@@ -25,5 +25,8 @@
     <SolidColorBrush x:Key="PsCanvasSurround" Color="#ACACAC"/>
     <SolidColorBrush x:Key="PsContentBg" Color="#FFFFFF"/>       <!-- list/content wells -->
     <SolidColorBrush x:Key="PsHover" Color="#D8D8D8"/>
+    <!-- Toolbox glyph colour (Services/ToolIcons). Dark on the light tool strip, and dark enough
+         to stay legible on the accent-tinted background a selected tool button gets. -->
+    <SolidColorBrush x:Key="PsIconGlyph" Color="#3A3A3A"/>
 
 </ResourceDictionary>

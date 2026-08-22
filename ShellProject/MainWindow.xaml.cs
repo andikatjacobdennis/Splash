@@ -193,6 +193,13 @@ namespace PaintClone
         {
             try
             {
+                // Monochrome vector glyphs in the active theme's colour (Services/ToolIcons),
+                // replacing the colour flat-art PNGs this used to load - see that class for why.
+                var vector = ToolIcons.Create(toolKey);
+                if (vector != null) return vector;
+
+                // No vector defined for this key (a plugin-supplied tool, say) - fall back to the
+                // original PNG if one happens to exist under that name.
                 var uri = new Uri($"pack://application:,,,/Resources/Icons/{iconFile}.png", UriKind.Absolute);
                 var bmp = new BitmapImage(uri);
                 var img = new Image { Source = bmp, Width = 26, Height = 26, Stretch = Stretch.Uniform };
@@ -202,17 +209,18 @@ namespace PaintClone
             catch
             {
                 // Icon resource missing for some reason - fall back to a readable label rather
-                // than an empty button. Explicit dark Foreground, not the theme-following default:
-                // this sits on ToolButtonStyle's constant near-white icon chip regardless of which
-                // app theme is active (see App.xaml), so light theme-appropriate text would go
-                // invisible - light-on-near-white - the moment the active theme is Dark.
-                return new TextBlock
+                // than an empty button. Takes the same theme-following glyph colour the vector
+                // icons use: this now sits directly on the tool strip (the constant near-white
+                // chip that used to be behind it is gone), so a hardcoded dark colour here would
+                // be invisible in the dark theme.
+                var label = new TextBlock
                 {
                     Text = ToolFallbackText.TryGetValue(toolKey, out var t) ? t : toolKey,
                     FontSize = 9,
-                    TextAlignment = TextAlignment.Center,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E))
+                    TextAlignment = TextAlignment.Center
                 };
+                label.SetResourceReference(TextBlock.ForegroundProperty, "PsIconGlyph");
+                return label;
             }
         }
 
@@ -634,17 +642,33 @@ namespace PaintClone
             StatusText.Text = $"{shape.Label} - drag it to move, resize with the handles, or click elsewhere to start another.";
         }
 
-        /// <summary>Bounds for a pending shape's defining points, padded for stroke thickness and
-        /// clamped to the canvas.</summary>
+        /// <summary>Bounds for a pending shape's defining points, padded for stroke thickness.
+        ///
+        /// Deliberately NOT clamped to the canvas. Clamping is what made a shape dragged out past
+        /// an edge snap back inside on release: the shape is re-rendered by mapping its defining
+        /// points into whatever box this returns (see RenderPendingShapeToFloat), so cropping the
+        /// box to the canvas silently redrew the whole shape smaller, inside it, rather than
+        /// leaving the part that overhangs simply not visible. Keeping the true bounds - negative
+        /// origins included - means a shape that hangs off the edge stays exactly the shape it was
+        /// drawn as, and can still be dragged back into view afterwards.
+        ///
+        /// Nothing downstream needs the clamp: RasterSurface.Blit already skips destination pixels
+        /// outside the surface, so committing an overhanging shape writes only the part that lands
+        /// on the canvas. The size is still capped, though - purely to stop a wild drag from
+        /// allocating an enormous bitmap.</summary>
         private Int32Rect PendingShapeBounds(Point start, Point end, int pad)
         {
             int x0 = (int)Math.Min(start.X, end.X), y0 = (int)Math.Min(start.Y, end.Y);
             int x1 = (int)Math.Max(start.X, end.X), y1 = (int)Math.Max(start.Y, end.Y);
-            int px = Math.Max(0, x0 - pad);
-            int py = Math.Max(0, y0 - pad);
-            int pw = Math.Min(_document.Width, x1 + pad) - px;
-            int ph = Math.Min(_document.Height, y1 + pad) - py;
-            return new Int32Rect(px, py, Math.Max(1, pw), Math.Max(1, ph));
+
+            int px = x0 - pad;
+            int py = y0 - pad;
+            int pw = (x1 + pad) - px;
+            int ph = (y1 + pad) - py;
+
+            int maxW = Math.Max(64, _document.Width * 4);
+            int maxH = Math.Max(64, _document.Height * 4);
+            return new Int32Rect(px, py, Math.Clamp(pw, 1, maxW), Math.Clamp(ph, 1, maxH));
         }
 
         /// <summary>Renders the pending shape fresh into a transparent bitmap sized to the given
@@ -935,8 +959,14 @@ namespace PaintClone
             PositionCanvasResizeHandles();
             RepositionActiveTextBoxForZoom();
             RefreshSelectionHandles();
-            if (_currentToolKey == "Magnifier") BuildToolOptions("Magnifier");
+            // Refresh the Magnifier's own Zoom dropdown so it reflects a zoom changed from
+            // elsewhere (the View menu, Ctrl +/-). Skipped when the change came *from* that
+            // dropdown: rebuilding the options bar clears its children, which would destroy the
+            // ComboBox whose SelectionChanged handler is still on the stack.
+            if (_currentToolKey == "Magnifier" && !_suppressZoomOptionRebuild) BuildToolOptions("Magnifier");
         }
+
+        private bool _suppressZoomOptionRebuild;
 
         /// <summary>Keeps the live text box's on-screen size/position/font size in sync with the
         /// current zoom, using _activeTextDocRect (true document-space, unaffected by zoom) as the
@@ -1255,33 +1285,44 @@ namespace PaintClone
             ToolOptionsPanel.Children.Add(element);
         }
 
-        /// <summary>Adds a labeled row of mutually-exclusive toggle buttons, with the current value
-        /// shown pressed-in. This is the single place selection-highlighting is handled, so every
-        /// option group (size, brush shape, fill mode, zoom, opaque/transparent) looks and behaves
-        /// consistently.</summary>
-        private void AddExclusiveToggleRow(string label, IEnumerable<(string Content, bool Selected, Action OnSelect)> items)
+        /// <summary>Adds a labelled dropdown for a mutually-exclusive option. This is the single
+        /// place option pickers are built, so every group (size, brush shape, fill mode, blend,
+        /// zoom, ...) looks and behaves the same.
+        ///
+        /// These were rows of small toggle buttons until now. A dropdown reads its current value at
+        /// a glance without decoding which little glyph happens to look pressed in, names each
+        /// choice in words rather than a symbol, and - the practical reason - doesn't have to fit
+        /// every possible value on screen at once, which is what had kept things like brush size
+        /// pinned to a handful of preset numbers.</summary>
+        private ComboBox AddOptionCombo<T>(string label, IEnumerable<(string Text, T Value)> items,
+                                           T current, Action<T> onSelect, double width = 104)
         {
             AddOptionLabel(label);
-            var wrap = new WrapPanel();
-            var buttons = new List<ToggleButton>();
-            foreach (var (content, selected, onSelect) in items)
+            var combo = new ComboBox { Width = width, Height = 22, VerticalContentAlignment = VerticalAlignment.Center };
+            foreach (var (text, value) in items)
             {
-                var btn = new ToggleButton
-                {
-                    Style = (Style)FindResource("OptionToggleStyle"),
-                    Content = content,
-                    IsChecked = selected
-                };
-                btn.Click += (o, e) =>
-                {
-                    if (btn.IsChecked != true) { btn.IsChecked = true; return; } // don't allow un-checking to nothing
-                    foreach (var other in buttons) if (other != btn) other.IsChecked = false;
-                    onSelect();
-                };
-                buttons.Add(btn);
-                wrap.Children.Add(btn);
+                var item = new ComboBoxItem { Content = text, Tag = value };
+                combo.Items.Add(item);
+                if (EqualityComparer<T>.Default.Equals(value, current)) combo.SelectedItem = item;
             }
-            AddOptionGroup(wrap);
+            if (combo.SelectedItem == null && combo.Items.Count > 0) combo.SelectedIndex = 0;
+            combo.SelectionChanged += (o, e) =>
+            {
+                if (combo.SelectedItem is ComboBoxItem { Tag: T value }) onSelect(value);
+            };
+            AddOptionGroup(combo);
+            return combo;
+        }
+
+        /// <summary>A dropdown over an unbroken run of whole numbers - every value in the range, not
+        /// a handful of presets. Used for the size pickers, where being able to pick (say) 7 rather
+        /// than only 5 or 8 is the whole point.</summary>
+        private ComboBox AddNumberCombo(string label, int min, int max, int current, Action<int> onSelect,
+                                        double width = 62)
+        {
+            var values = new List<(string, int)>(max - min + 1);
+            for (int i = min; i <= max; i++) values.Add((i.ToString(), i));
+            return AddOptionCombo(label, values, Math.Max(min, Math.Min(max, current)), onSelect, width);
         }
 
         private void BuildToolOptions(string key)
@@ -1295,15 +1336,17 @@ namespace PaintClone
 
             if (needsSize)
             {
-                var sizes = new[] { 1, 2, 3, 5, 8 };
-                AddExclusiveToggleRow("Size:", sizes.Select(s =>
-                    (s.ToString(), _ctx.PenSize == s, (Action)(() => { _ctx.PenSize = s; if (_currentToolKey == "Eraser") UpdateEraserOutline(_lastCanvasDocPoint); }))));
+                AddNumberCombo("Size:", 1, 100, (int)_ctx.PenSize, v =>
+                {
+                    _ctx.PenSize = v;
+                    if (_currentToolKey == "Eraser") UpdateEraserOutline(_lastCanvasDocPoint);
+                });
             }
 
             if (key == "Arrow")
             {
-                AddExclusiveToggleRow("Head:", ArrowStyleChoices.Select(a =>
-                    (a.Glyph, _ctx.ArrowStyle == a.Style, (Action)(() => _ctx.ArrowStyle = a.Style))));
+                AddOptionCombo("Head:", ArrowStyleChoices.Select(a => (a.Tip, a.Style)),
+                    _ctx.ArrowStyle, v => _ctx.ArrowStyle = v, 150);
             }
 
             // Anti-aliasing applies to any tool that draws an edge. Offered per tool (and
@@ -1313,90 +1356,93 @@ namespace PaintClone
                 or "Rectangle" or "Ellipse" or "RoundedRectangle" or "Polygon" or "Arrow" or "Star"
                 or "Gradient" or "Text")
             {
-                AddExclusiveToggleRow("Edges:", new[]
-                {
-                    ("\u25A0", !_ctx.AntiAlias, (Action)(() => _ctx.AntiAlias = false)),
-                    ("\u25CF", _ctx.AntiAlias,  (Action)(() => _ctx.AntiAlias = true)),
-                });
+                AddOptionCombo("Edges:", new[] { ("Hard", false), ("Smooth", true) },
+                    _ctx.AntiAlias, v => _ctx.AntiAlias = v, 82);
             }
 
             if (key == "MagicWand")
             {
-                var tolerances = new[] { 0, 8, 16, 32, 64, 128 };
-                AddExclusiveToggleRow("Tolerance:", tolerances.Select(t =>
-                    (t.ToString(), _ctx.WandTolerance == t, (Action)(() => _ctx.WandTolerance = t))));
+                AddNumberCombo("Tolerance:", 0, 255, _ctx.WandTolerance, v => _ctx.WandTolerance = v);
 
-                AddExclusiveToggleRow("Search:", new[]
-                {
-                    ("\u2b1a", _ctx.WandContiguous, (Action)(() => _ctx.WandContiguous = true)),
-                    ("\u2237", !_ctx.WandContiguous, (Action)(() => _ctx.WandContiguous = false)),
-                });
+                AddOptionCombo("Search:", new[] { ("Connected area", true), ("Whole layer", false) },
+                    _ctx.WandContiguous, v => _ctx.WandContiguous = v, 118);
             }
 
             if (key == "Gradient")
             {
-                AddExclusiveToggleRow("Blend:", GradientTypeChoices.Select(g =>
-                    (g.Glyph, _ctx.GradientType == g.Type, (Action)(() => _ctx.GradientType = g.Type))));
+                AddOptionCombo("Blend:", GradientTypeChoices.Select(g => (g.Tip, g.Type)),
+                    _ctx.GradientType, v => _ctx.GradientType = v, 200);
 
-                var ditherBtn = new ToggleButton
+                // A plain on/off, so a checkbox rather than a two-entry dropdown.
+                var dither = new CheckBox
                 {
-                    Style = (Style)FindResource("OptionToggleStyle"),
-                    Content = "\u2591",
+                    Content = "Dither",
                     IsChecked = _ctx.GradientDither,
-                    ToolTip = "Dither - smooths out banding in gradual blends"
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = "Smooths out banding in gradual blends"
                 };
-                ditherBtn.Checked += (o, e) => _ctx.GradientDither = true;
-                ditherBtn.Unchecked += (o, e) => _ctx.GradientDither = false;
-                AddOptionLabel("Dither:");
-                var dw = new WrapPanel();
-                dw.Children.Add(ditherBtn);
-                AddOptionGroup(dw);
+                dither.Checked += (o, e) => _ctx.GradientDither = true;
+                dither.Unchecked += (o, e) => _ctx.GradientDither = false;
+                AddOptionGroup(dither);
             }
 
             if (key == "Star")
             {
-                var counts = new[] { 3, 4, 5, 6, 8, 12 };
-                AddExclusiveToggleRow("Points:", counts.Select(n =>
-                    (n.ToString(), _ctx.StarPoints == n, (Action)(() => _ctx.StarPoints = n))));
+                AddNumberCombo("Points:", 3, 24, _ctx.StarPoints, v => _ctx.StarPoints = v);
             }
 
             if (isBrush)
             {
-                AddExclusiveToggleRow("Shape:", BrushShapeChoices.Select(bs =>
-                    (bs.Glyph, _ctx.BrushShape == bs.Shape, (Action)(() => _ctx.BrushShape = bs.Shape))));
+                AddOptionCombo("Shape:", BrushShapeChoices.Select(bs => (bs.Tip, bs.Shape)),
+                    _ctx.BrushShape, v => _ctx.BrushShape = v, 160);
             }
 
             if (needsFill)
             {
-                AddExclusiveToggleRow("Fill:", new[]
+                AddOptionCombo("Fill:", new[]
                 {
-                    ("\u25A2", _ctx.ShapeFillMode == ShapeFillMode.OutlineOnly, (Action)(() => _ctx.ShapeFillMode = ShapeFillMode.OutlineOnly)),
-                    ("\u25A0", _ctx.ShapeFillMode == ShapeFillMode.FillOnly, (Action)(() => _ctx.ShapeFillMode = ShapeFillMode.FillOnly)),
-                    ("\u25A8", _ctx.ShapeFillMode == ShapeFillMode.OutlineAndFill, (Action)(() => _ctx.ShapeFillMode = ShapeFillMode.OutlineAndFill)),
-                });
+                    ("Outline only", ShapeFillMode.OutlineOnly),
+                    ("Filled", ShapeFillMode.FillOnly),
+                    ("Outline + fill", ShapeFillMode.OutlineAndFill),
+                }, _ctx.ShapeFillMode, v => _ctx.ShapeFillMode = v, 116);
             }
 
             if (isText)
             {
                 AddOptionLabel("Font:");
-                var fontCombo = new ComboBox { Width = 100, HorizontalAlignment = HorizontalAlignment.Left };
-                foreach (var f in CommonFontFamilies) fontCombo.Items.Add(f);
-                fontCombo.SelectedItem = CommonFontFamilies.Contains(_textFontFamily) ? _textFontFamily : CommonFontFamilies[0];
+                var fontCombo = new ComboBox { Width = 150, Height = 22, VerticalContentAlignment = VerticalAlignment.Center };
+                foreach (var f in CommonFontFamilies)
+                {
+                    // Each entry is shown in the font it names, so the list previews what you're
+                    // actually choosing instead of spelling every option out in one uniform face.
+                    fontCombo.Items.Add(new ComboBoxItem
+                    {
+                        Content = f,
+                        Tag = f,
+                        FontFamily = new FontFamily(f),
+                        FontSize = 13
+                    });
+                }
+                string currentFont = CommonFontFamilies.Contains(_textFontFamily) ? _textFontFamily : CommonFontFamilies[0];
+                foreach (ComboBoxItem item in fontCombo.Items)
+                    if ((string)item.Tag == currentFont) { fontCombo.SelectedItem = item; break; }
                 fontCombo.SelectionChanged += (o, e) =>
                 {
-                    if (fontCombo.SelectedItem is not string fam) return;
+                    if (fontCombo.SelectedItem is not ComboBoxItem { Tag: string fam }) return;
                     _textFontFamily = fam;
                     if (_activeTextBox != null) _activeTextBox.FontFamily = new FontFamily(fam);
                 };
                 AddOptionGroup(fontCombo);
 
-                var sizes = new[] { 8, 10, 12, 16, 20, 24, 36, 48 };
-                AddExclusiveToggleRow("Size:", sizes.Select(sz =>
-                    (sz.ToString(), _textFontSize == sz, (Action)(() =>
+                AddNumberCombo("Size:", 6, 200, (int)_textFontSize, sz =>
+                {
+                    _textFontSize = sz;
+                    if (_activeTextBox != null)
                     {
-                        _textFontSize = sz;
-                        if (_activeTextBox != null) _activeTextBox.FontSize = Math.Max(8, _textFontSize * _zoom);
-                    }))));
+                        _activeTextBox.FontSize = Math.Max(8, _textFontSize * _zoom);
+                        AutoGrowTextBox(); // a larger face may no longer fit the box it's being typed into
+                    }
+                });
 
                 AddOptionLabel("Style:");
                 var boldBtn = new ToggleButton { Style = (Style)FindResource("OptionToggleStyle"), Content = "B", FontWeight = FontWeights.Bold, IsChecked = _textBold };
@@ -1415,48 +1461,23 @@ namespace PaintClone
 
             if (key == "Magnifier")
             {
-                AddExclusiveToggleRow("Zoom:", MagnifierTool.Levels.Select(level =>
-                    ($"{(int)level}x", _zoom == level, (Action)(() => SetZoom(level)))));
+                AddOptionCombo("Zoom:", MagnifierTool.Levels.Select(level => ($"{(int)level}x", level)),
+                    _zoom, level =>
+                    {
+                        _suppressZoomOptionRebuild = true;
+                        try { SetZoom(level); } finally { _suppressZoomOptionRebuild = false; }
+                    }, 70);
             }
 
             if (key is "Select" or "FreeFormSelect" or "MagicWand")
             {
-                AddOptionLabel("Background:");
-                AddDrawOpaqueToggleRow();
+                AddOptionCombo("Background:", new[] { ("Opaque", true), ("Transparent", false) },
+                    _selection.DrawOpaque, v =>
+                    {
+                        _selection.DrawOpaque = v;
+                        MenuDrawOpaque.IsChecked = v; // Image > Draw Opaque is the same setting
+                    }, 104);
             }
-        }
-
-        /// <summary>Opaque/Transparent selector shown for the selection tools - classic Paint shows
-        /// this as two small pictures (a solid square vs. a checkered "see-through" square) rather
-        /// than text labels, so this builds the same kind of visual swatch instead of a ToggleButton
-        /// with a text Content.</summary>
-        private void AddDrawOpaqueToggleRow()
-        {
-            var opaqueSwatch = new Border { Width = 20, Height = 20, Background = new SolidColorBrush(Color.FromRgb(0x9E, 0xC4, 0xE8)), BorderBrush = Brushes.Black, BorderThickness = new Thickness(1) };
-            var transparentSwatch = new Border { Width = 20, Height = 20, Background = (Brush)FindResource("CheckerboardBrush"), BorderBrush = Brushes.Black, BorderThickness = new Thickness(1) };
-
-            var opaqueBtn = new ToggleButton { Style = (Style)FindResource("OptionToggleStyle"), Width = 28, Height = 26, Content = opaqueSwatch, IsChecked = _selection.DrawOpaque, ToolTip = "Opaque - background-colored pixels move with the selection" };
-            var transparentBtn = new ToggleButton { Style = (Style)FindResource("OptionToggleStyle"), Width = 28, Height = 26, Content = transparentSwatch, IsChecked = !_selection.DrawOpaque, ToolTip = "Transparent - background-colored pixels are see-through" };
-
-            opaqueBtn.Click += (o, e) =>
-            {
-                if (opaqueBtn.IsChecked != true) { opaqueBtn.IsChecked = true; return; }
-                transparentBtn.IsChecked = false;
-                _selection.DrawOpaque = true;
-                MenuDrawOpaque.IsChecked = true;
-            };
-            transparentBtn.Click += (o, e) =>
-            {
-                if (transparentBtn.IsChecked != true) { transparentBtn.IsChecked = true; return; }
-                opaqueBtn.IsChecked = false;
-                _selection.DrawOpaque = false;
-                MenuDrawOpaque.IsChecked = false;
-            };
-
-            var wrap = new WrapPanel();
-            wrap.Children.Add(opaqueBtn);
-            wrap.Children.Add(transparentBtn);
-            AddOptionGroup(wrap);
         }
 
         // ===================================================================

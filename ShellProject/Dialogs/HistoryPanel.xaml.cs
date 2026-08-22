@@ -63,6 +63,25 @@ namespace PaintClone.Dialogs
             int index = HistoryList.ItemContainerGenerator.IndexFromContainer(container);
             if (index < 0) return;
 
+            DeleteStep(index);
+        }
+
+        /// <summary>Delete via the button - the same operation right-click already performed, but
+        /// discoverable, which right-click alone was not.</summary>
+        private void DeleteStep_Click(object sender, RoutedEventArgs e)
+        {
+            if (HistoryList.SelectedIndex < 0)
+            {
+                MessageBox.Show(Window.GetWindow(this), "Select the step you want to remove first.",
+                    "History", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            DeleteStep(HistoryList.SelectedIndex);
+        }
+
+        private void DeleteStep(int index)
+        {
+            if (index < 0) return;
             if (index == _history.CurrentIndex)
             {
                 MessageBox.Show(Window.GetWindow(this), "The current step can't be deleted - undo or redo away from it first.",
@@ -70,6 +89,18 @@ namespace PaintClone.Dialogs
                 return;
             }
             _history.DeleteEntry(index); // fires StateChanged, which refreshes this list automatically
+        }
+
+        /// <summary>Throws the whole history away while leaving the picture exactly as it is - the
+        /// way to reclaim the memory a long editing session's worth of full-frame snapshots holds
+        /// without having to undo anything first.</summary>
+        private void ClearSteps_Click(object sender, RoutedEventArgs e)
+        {
+            if (MessageBox.Show(Window.GetWindow(this),
+                    "Discard every step in the history? The picture itself is left exactly as it is now, but you won't be able to undo back past this point.",
+                    "History", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
+            _history.Clear("Current State");
         }
     }
 }

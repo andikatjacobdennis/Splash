@@ -234,6 +234,60 @@ namespace PaintClone.Models
             MarkDirty();
         }
 
+        /// <summary>Renames a layer. Undo captures layer names as part of its snapshots, so this is
+        /// undoable for free provided the caller pushes an undo state first, as with every other
+        /// structural layer operation here.</summary>
+        public void RenameLayer(int index, string name)
+        {
+            if (index < 0 || index >= Layers.Count) return;
+            name = (name ?? "").Trim();
+            if (name.Length == 0 || name == Layers[index].Name) return;
+            Layers[index].Name = name;
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+            MarkDirty();
+        }
+
+        /// <summary>Flattens several layers at once into the lowest one among them, in bottom-to-top
+        /// order so the result matches what was on screen. The multi-layer counterpart to MergeDown,
+        /// which only ever handled "this layer into the one directly beneath it".
+        ///
+        /// Shares MergeDown's rules deliberately: a hidden layer contributes nothing (merging should
+        /// preserve what you actually see, not revive invisible content), and the surviving layer
+        /// stops being a text layer if anything was merged into it - its pixels are now a composite
+        /// that no TextLayerData describes, so keeping that data would mean the next re-render
+        /// silently discarded whatever had been merged in.</summary>
+        public void MergeLayers(IEnumerable<int> indices)
+        {
+            var ordered = new List<int>();
+            foreach (var i in indices)
+                if (i >= 0 && i < Layers.Count && !ordered.Contains(i)) ordered.Add(i);
+            ordered.Sort();
+            if (ordered.Count < 2) return;
+
+            int targetIndex = ordered[0];
+            var target = Layers[targetIndex];
+
+            // A hidden *target* would otherwise silently absorb visible layers into something you
+            // can't see - promote it to visible, since the merged result is meant to be the picture.
+            if (!target.Visible && ordered.Count > 1) target.Visible = true;
+
+            for (int n = 1; n < ordered.Count; n++)
+            {
+                var source = Layers[ordered[n]];
+                if (source.Visible)
+                    target.Surface.Blit(source.Surface.Bitmap, 0, 0, transparentColor: Colors.Transparent);
+            }
+
+            target.Text = null; // see summary - the composite is no longer describable as live text
+
+            // Removed high-index-first so each removal can't shift the indices still to be removed.
+            for (int n = ordered.Count - 1; n >= 1; n--) Layers.RemoveAt(ordered[n]);
+
+            ActiveLayerIndex = Math.Max(0, Math.Min(targetIndex, Layers.Count - 1));
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+            MarkDirty();
+        }
+
         public void SetLayerVisible(int index, bool visible)
         {
             if (index < 0 || index >= Layers.Count) return;

@@ -1804,6 +1804,145 @@ real undo history (undoing to a point mid-edit would restore a blanked or hidden
 undo during commit would capture the blanked pixels alongside the pre-edit text). Suppressing at
 the canvas's own per-layer `Image` touches nothing the document model or undo knows about.
 
+### Fifty-sixth round: monochrome vector icons, layer rename, multi-layer merge, history housekeeping
+
+Five requests in one round.
+
+**Tool icons are now monochrome vectors that follow the theme** (`Services/ToolIcons`). This
+replaces both the colour flat-art PNGs *and* the constant near-white "chip" round forty-six had put
+behind them - that chip only ever existed to give artwork drawn for a light backdrop somewhere
+light to sit, and it looked nothing like a real creative tool's toolbar. All twenty tools are now
+geometry authored in a 24x24 box and drawn in a single `PsIconGlyph` colour, added to both theme
+dictionaries (light grey on the dark strip, dark grey on the light one). The colour is attached
+with `SetResourceReference`, so a Dark/Light switch re-paints icons already sitting in the toolbox
+rather than only newly created ones. Fill, Airbrush and Magic Wand were redrawn to read the way
+Photoshop's do - a tilted pail with a handle and a falling drip, a spray can with droplets leaving
+the nozzle, and a wand with a bright tip and sparkles. The Gradient icon is a special case: it's
+filled with the ordinary glyph brush and faded by a `LinearGradientBrush` *opacity mask*, since a
+mask reads only alpha - so the fade needs no knowledge of the theme's colour and tracks a switch
+for free, where baking the colour into gradient stops would have frozen it.
+
+**Layer rename**: double-click a layer's name to edit it in place, committing on Enter or focus
+loss and abandoning on Escape (`LayersPanel.BeginRename` + `PaintDocument.RenameLayer`). Undoable,
+because layer names were already captured in `HistoryManager`'s snapshots - it only needed the undo
+state pushed first, like every other structural layer operation.
+
+**Multi-layer merge**: the row checkbox now selects layers for merging, and visibility moved to its
+own eye toggle beside it, so nothing was lost in the swap. `PaintDocument.MergeLayers` flattens any
+number of layers into the lowest one among them, bottom-to-top so the result matches what was on
+screen. It deliberately inherits `MergeDown`'s existing rules - a hidden layer contributes nothing
+(merging preserves what you actually see rather than reviving invisible content) - and clears the
+surviving layer's `TextLayerData` if anything merged into it, since the composite is no longer
+something that text data describes and keeping it would mean the next re-render silently discarded
+whatever had been merged in. With nothing ticked, the Merge button still does the old single
+"merge down into the layer below", so it never becomes useless for the common case.
+
+**History**: Delete was already implemented but only reachable by right-clicking a step, which is
+undiscoverable - it now has a real button, alongside a Clear that discards the whole history while
+leaving the picture untouched (the way to reclaim what a long session's worth of full-frame
+snapshots is holding). **Reorder was deliberately not implemented**, and the panel now says why
+rather than just asserting it: each entry is a snapshot of the *entire picture* at that point, not
+a replayable action, so putting them in a different order wouldn't reinterpret the edits - it would
+just claim the picture passed through states in an order it never did. Photoshop's own History
+panel is linear for the same reason. Deleting a step is coherent; reordering isn't.
+
+Verified with a throwaway harness (same approach as previous rounds, deleted afterward): all twenty
+icon geometries actually parse and build - worth checking directly, because `MakeToolIcon` catches
+exceptions and falls back, so a malformed path would have silently degraded to a text label rather
+than failing loudly - plus multi-layer merge (out-of-order indices, pixels absorbed correctly, the
+hidden-layer rule, text data cleared, single-index no-op) and rename trimming/blank rejection. One
+assertion failed on the first run; the bug was in the test, not the code (it checked the red
+channel to tell red from white, which they share). 32/32 after fixing it, plus a launch check under
+each theme.
+
+### Fifty-seventh round: the rename flicker was reentrancy, and tool options became dropdowns
+
+**Renaming a layer briefly showed every layer twice.** A genuine reentrancy bug, and the same shape
+as the one two rounds earlier: `LayersPanel.Refresh` starts by clearing the list, which detaches an
+in-progress rename `TextBox`, which fires its `LostKeyboardFocus` handler, which commits the
+rename, which raises `LayersChanged`, which calls straight back into `Refresh`. The inner call
+cleared and fully repopulated the list; then the outer call's loop carried on appending its own
+rows on top of that - every layer listed twice, until the next refresh happened to tidy it up.
+Fixed with a reentrancy guard at the top of `Refresh` (the `_populating` flag it already kept for a
+different purpose). The outer call is already rebuilding from current state, including the new
+name, so bailing out of the inner one loses nothing.
+
+**Tool options are dropdowns now**, replacing the rows of small toggle buttons. A dropdown shows
+its current value in words instead of asking you to spot which glyph looks pressed in, and - the
+practical reason - it doesn't have to fit every possible value on screen at once, which is exactly
+what had kept sizes pinned to a handful of presets:
+
+- **Size is continuous**: 1-100 for the drawing tools and 6-200 for text, every whole number,
+  rather than the old `1, 2, 3, 5, 8` and `8, 10, 12, 16, 20, 24, 36, 48`.
+- Brush shape, arrow head, gradient blend, fill mode, edges, magic-wand tolerance (now 0-255,
+  continuous) and search mode, star points (3-24), magnifier zoom, and the selection tools'
+  opaque/transparent all became dropdowns too, each naming its options in words - "Outline + fill",
+  "Connected area", "Smooth" - instead of a symbol like `▨` or `∷`.
+- Bold/Italic/Underline stay as toggle buttons: they're independent on/off switches rather than one
+  exclusive choice, so a dropdown would be the wrong control. Gradient dither became a plain
+  checkbox for the same reason.
+- **The font list previews each font in itself** - every entry is rendered in the family it names.
+
+Two helpers (`AddOptionCombo`, `AddNumberCombo`) now build all of these, replacing
+`AddExclusiveToggleRow` and the hand-built opaque/transparent swatch row, so the whole options bar
+stays consistent from one place.
+
+Building this surfaced a second latent instance of the very same reentrancy hazard: picking a value
+from the Magnifier's Zoom dropdown calls `SetZoom`, which ends with
+`if (_currentToolKey == "Magnifier") BuildToolOptions("Magnifier")` - and that clears the options
+bar's children, destroying the ComboBox whose `SelectionChanged` handler is still on the stack.
+Harmless with the old toggle buttons, not something to leave in place with a dropdown. Guarded with
+a flag so the rebuild is skipped when the change came from that dropdown (which is already
+displaying the new value); it still happens when the zoom changes from the View menu or Ctrl +/-.
+
+Verified by driving the real running app: `SendKeys` through all twenty single-key tool shortcuts,
+rebuilding the options bar for every tool in turn, checking the process survived each one - it did,
+with an empty error log. Worth doing end-to-end rather than by review, because only the startup
+tool's options branch runs otherwise, so a bad branch would sit undiscovered until that tool was
+clicked. An attempt to test this by constructing `MainWindow` from a separate harness was abandoned
+instead of worked around: WPF resolves short-form pack URIs against the application's resource
+assembly, which is fixed to the entry assembly before `Main` runs, so resources resolved against
+the harness rather than ShellProject. `ThemeManager` did get its dictionary URI made
+assembly-qualified along the way, which is the more correct form regardless.
+
+### Fifty-eighth round: unreadable tooltips, a blank-looking layer row, and shapes snapping back inside the canvas
+
+Diagnosed by screenshotting the running app and driving it with synthetic mouse/keyboard input,
+rather than by reading code and guessing - which is what finally made the first two obvious, since
+both are things you can only really see.
+
+- **Tooltips were unreadable in the dark theme.** `ToolTip` had no style, so it kept WPF's default
+  pale bubble - while its text, a bare string that WPF wraps in a generated `TextBlock`, picked up
+  the app-wide implicit `TextBlock` style and came out in the theme's *light* foreground colour.
+  Nearly-white on nearly-white. Confirmed by hovering a tool and capturing the result: the word
+  "Brush" was just barely discernible. Fixed with a proper themed `ToolTip` style (dark background,
+  themed border, `TextElement.Foreground` carried down through the `ContentPresenter` so it reaches
+  that generated TextBlock - the case that was actually broken).
+- **The "blank rectangle" in each layer row** was the visibility toggle added last round, left
+  unstyled: it drew as a stock pale system button whose glyph, again a plain string inheriting the
+  theme's light foreground, was invisible against it. It now uses the same themed
+  `OptionToggleStyle` the options bar uses, so the eye reads clearly and its checked state shows the
+  accent tint. Since the report described it as a *preview* rectangle, each row also gained an
+  actual one: a live thumbnail of that layer, its `Image` pointed straight at the layer's own
+  `WriteableBitmap` so it stays current as the layer is drawn on rather than needing regeneration,
+  over a checkerboard so a transparent layer reads as transparent instead of as an empty box.
+- **A shape dragged past the canvas edge snapped back inside on release.** `PendingShapeBounds`
+  clamped its result to the canvas. Because a pending shape is re-rendered by mapping its defining
+  points into whatever box that returns, clamping didn't crop the overhang - it silently redrew the
+  entire shape smaller and fully inside the canvas. It now keeps the shape's true bounds, negative
+  origins included. Nothing downstream needed the clamp: `RasterSurface.Blit` already skips
+  destination pixels outside the surface, so committing an overhanging shape writes only the part
+  that lands on the canvas. The size is still capped (four times the document's dimensions) purely
+  so a wild drag can't allocate an enormous bitmap. Verified by dragging a star from inside the
+  canvas out past its corner: the marquee and two of its four handles now sit outside the canvas
+  and the visible portion is correctly clipped, where before the whole star was rescaled inside.
+
+A fourth report - being unable to switch tools after choosing a colour with the Fill tool active -
+could not be reproduced. Three candidate readings were each driven end-to-end against the running
+app (pick a swatch then click another tool's button; perform a fill then switch; open Edit Colors,
+choose a colour, confirm, then switch) and tool switching worked every time. Left unfixed rather
+than guessing at a change, pending exact steps.
+
 ## How to build
 
 Requires Windows + .NET 10 SDK (WPF is Windows-only; this will not build on Linux/macOS).

@@ -33,6 +33,36 @@
             <Setter Property="Margin" Value="2"/>
         </Style>
 
+        <!-- Tooltips need an explicit theme. Left alone they keep WPF's default pale background,
+             while their text - a bare string, which WPF wraps in a TextBlock - picks up the
+             implicit TextBlock style above and comes out in the theme's light foreground colour.
+             In the dark theme that is nearly-white text on a nearly-white bubble. Styling the
+             ToolTip itself sets both halves together so they can't drift apart again. -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="{DynamicResource XpFaceDark}"/>
+            <Setter Property="Foreground" Value="{DynamicResource PsText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource XpBorderLight}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="7,4"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <!-- TextElement.Foreground carries the colour down to the TextBlock WPF
+                                 generates for a plain-string tooltip, which is the case that was
+                                 actually broken. -->
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="Menu">
             <Setter Property="Background" Value="{DynamicResource XpMenuBg}"/>
             <Setter Property="Foreground" Value="{DynamicResource PsText}"/>
@@ -641,20 +671,13 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
+                        <!-- No icon "chip" behind the glyph any more: the icons are monochrome
+                             vectors drawn in the theme's own PsIconGlyph colour (see
+                             Services/ToolIcons), so they sit legibly straight on the tool strip in
+                             either theme. The chip previously here existed only to give the old
+                             colour flat-art PNGs the light backdrop they'd been drawn against. -->
                         <Border x:Name="Bd" BorderThickness="1" BorderBrush="Transparent" Background="Transparent">
-                            <!-- The tool icons are colour flat-art (a dark navy outline plus a pale
-                                 fill, e.g. the ellipse/rectangle glyphs) drawn assuming a light
-                                 backdrop - dropped straight onto the theme's own panel colour, the
-                                 navy outline nearly vanishes in the dark theme and the pale fill
-                                 nearly vanishes in the light theme. Giving every icon its own small,
-                                 constant near-white "card" - independent of which app theme is
-                                 active - restores the contrast the artwork was actually drawn for,
-                                 in both themes, without needing to redraw or recolor the icons
-                                 themselves. It's deliberately not a DynamicResource: it exists to
-                                 stay the same regardless of theme, not to track it.  -->
-                            <Border x:Name="IconChip" CornerRadius="4" Background="#E6FFFFFF" Margin="1">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">

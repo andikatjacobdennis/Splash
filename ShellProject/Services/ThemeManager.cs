@@ -26,9 +26,14 @@ namespace PaintClone.Services
         {
             if (themeName != Dark && themeName != Light) themeName = Dark;
 
+            // Assembly-qualified ("ShellProject;component/...") rather than the bare
+            // "/Themes/..." form: the short form resolves against whichever assembly happens to be
+            // the entry point, which is this one when the app runs normally but not when the
+            // assembly is loaded by anything else (a test host, a tool). Naming the assembly makes
+            // it resolve to these dictionaries either way.
             var dict = new ResourceDictionary
             {
-                Source = new Uri($"pack://application:,,,/Themes/{themeName}Theme.xaml", UriKind.Absolute)
+                Source = new Uri($"pack://application:,,,/ShellProject;component/Themes/{themeName}Theme.xaml", UriKind.Absolute)
             };
 
             var merged = Application.Current.Resources.MergedDictionaries;
