@@ -33,6 +33,12 @@ namespace PaintClone.Services
             public int Width, Height;
             public string Name;
             public bool Visible;
+
+            /// <summary>Null for a raster layer; an independent deep copy for a text layer - without
+            /// this, undoing past a text edit would restore the right pixels but leave every text
+            /// layer's live TextLayerData pointing at whatever it last was, silently turning it into
+            /// a plain (no longer re-editable) raster layer the moment any edit was ever undone.</summary>
+            public TextLayerData Text;
         }
 
         private class Snapshot
@@ -163,7 +169,8 @@ namespace PaintClone.Services
                 Width = l.Surface.Width,
                 Height = l.Surface.Height,
                 Name = l.Name,
-                Visible = l.Visible
+                Visible = l.Visible,
+                Text = l.Text?.Clone()
             }).ToList()
         };
 
@@ -174,7 +181,7 @@ namespace PaintClone.Services
             {
                 var surf = new RasterSurface(ls.Width, ls.Height, Colors.White);
                 surf.RestoreBytes(ls.Pixels);
-                restored.Add(new PaintLayer { Surface = surf, Name = ls.Name, Visible = ls.Visible });
+                restored.Add(new PaintLayer { Surface = surf, Name = ls.Name, Visible = ls.Visible, Text = ls.Text?.Clone() });
             }
             doc.RestoreLayers(restored, snap.ActiveLayerIndex);
         }

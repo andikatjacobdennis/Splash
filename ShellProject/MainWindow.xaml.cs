@@ -51,6 +51,15 @@ namespace PaintClone
         private string _textFontFamily = "Tahoma";
         private double _textFontSize = 16;
         private bool _textBold, _textItalic, _textUnderline;
+        private Color _textEditColor;
+        /// <summary>True while the box currently being edited is "point text" (see TextTool /
+        /// TextLayerData.AutoWidth) - grows in both directions, never wraps.</summary>
+        private bool _textAutoWidth;
+
+        /// <summary>-1 while creating a brand-new text layer; the index of an existing layer while
+        /// re-editing one (see TextTool/BeginTextEditOnActiveLayer) - what CommitActiveTextBox uses
+        /// to decide between AddTextLayer and updating that layer's TextLayerData in place.</summary>
+        private int _editingLayerIndex = -1;
 
         public MainWindow()
         {
@@ -70,7 +79,19 @@ namespace PaintClone
             _canvas.CanvasMouseUp += Canvas_MouseUp;
             AddResizeHandles();
 
-            _colors.ColorsChanged += (s, e) => UpdateColorSwatches();
+            _colors.ColorsChanged += (s, e) =>
+            {
+                UpdateColorSwatches();
+                // Live-preview a foreground color change onto whatever text is being typed right
+                // now, rather than only taking effect (or not) unpredictably at commit time.
+                if (_activeTextBox != null)
+                {
+                    _textEditColor = _colors.Foreground;
+                    var brush = new SolidColorBrush(_textEditColor);
+                    _activeTextBox.Foreground = brush;
+                    _activeTextBox.CaretBrush = brush;
+                }
+            };
             _history.StateChanged += (s, e) => UpdateEditMenuState();
             _selection.Changed += (s, e) => { UpdateEditMenuState(); RefreshSelectionHandles(); };
 
@@ -503,8 +524,10 @@ namespace PaintClone
                 StarPoints = _ctx?.StarPoints ?? 5,
                 SetStatusText = t => StatusText.Text = t,
                 BeginTextEditing = BeginTextEditing,
+                BeginTextEditOnActiveLayer = BeginTextEditOnActiveLayer,
                 RequestToolSwitch = SelectTool,
-                BeginPendingShape = BeginPendingShape
+                BeginPendingShape = BeginPendingShape,
+                FinalizePendingShape = FinalizePendingShapeInPlace
             };
         }
 
@@ -560,20 +583,47 @@ namespace PaintClone
             }
         }
 
+        /// <summary>The narrower counterpart to FinalizeFloatingSelection, used when a drag-shape
+        /// tool (Rectangle, Ellipse, ...) commits its own still-pending shape in place - e.g.
+        /// because the user clicked outside it to start the next one, right where they clicked, in
+        /// the very same gesture. Unlike FinalizeFloatingSelection this never switches tools: the
+        /// tool that's about to draw the next shape is already current, so there's nothing to
+        /// restore. Also handles the (normally unreachable, since SelectTool's own switch-away
+        /// cleanup prevents it) edge case of a stray non-floating selection somehow still being
+        /// present, so a shape tool's OnMouseDown never has to reason about that itself.</summary>
+        private void FinalizePendingShapeInPlace()
+        {
+            if (!_selection.HasSelection) return;
+            if (_selection.IsFloating)
+            {
+                if (_pendingShape != null)
+                {
+                    _history.PushUndoState(_document, _pendingShape.Label);
+                    _pendingShape = null;
+                }
+                _selection.Commit(_document.Surface);
+                _canvas.ClearPreview();
+                _document.MarkDirty();
+            }
+            // Commit() leaves Bounds set (a plain marquee over the now-rasterized result) rather
+            // than clearing the selection outright - drop that too, so it doesn't linger onscreen
+            // while the next shape is drawn.
+            _selection.Discard();
+            _canvas.ShowSelection(null);
+            RefreshSelectionHandles();
+        }
+
         /// <summary>Takes a shape that a shape tool drew but deliberately did NOT rasterize, and
         /// sets it up as a floating selection: rendered into a floating bitmap for display, with
         /// the document itself still untouched. While it stays selected, every move/resize
         /// re-renders it from its original defining points (see RenderPendingShapeToFloat) instead
         /// of resampling the previous render - so adjusting it repeatedly costs nothing in quality.
-        /// It's only rasterized into the document once, when the selection is finally committed.</summary>
+        /// It's only rasterized into the document once the selection is finally committed - which,
+        /// per DragShapeToolBase, the same tool that drew it can now do on its own (move it by
+        /// dragging its body, resize it via the same handles Select uses, or click away to commit
+        /// it and start the next one) without ever switching to the Select tool.</summary>
         private void BeginPendingShape(PendingShape shape)
         {
-            // Switch tools BEFORE creating the floating content, not after: SelectTool calls
-            // FinalizeFloatingSelection() as part of switching, which would otherwise immediately
-            // commit the pending shape to the document - defeating the entire point of keeping it
-            // unrasterized. At this moment nothing is floating yet, so that call is a no-op.
-            SelectTool("Select");
-
             _pendingShape = shape;
             var bounds = PendingShapeBounds(shape.Start, shape.End, shape.Pad);
             RenderPendingShapeToFloat(bounds);
@@ -581,7 +631,7 @@ namespace PaintClone
             SelectRectToolRenderHelper();
             _canvas.ShowSelection(bounds);
             RefreshSelectionHandles();
-            StatusText.Text = $"{shape.Label} - drag to move or resize; it stays editable until you click away.";
+            StatusText.Text = $"{shape.Label} - drag it to move, resize with the handles, or click elsewhere to start another.";
         }
 
         /// <summary>Bounds for a pending shape's defining points, padded for stroke thickness and
@@ -933,6 +983,28 @@ namespace PaintClone
             GridOverlay.Visibility = Visibility.Visible;
         }
 
+        /// <summary>Tools that never paint into Document.Surface directly - everything else does,
+        /// at some point, which is exactly what RasterizeActiveLayerIfText below guards against.</summary>
+        private static readonly HashSet<string> ToolsThatDontTouchLayerPixels = new()
+        {
+            "Select", "FreeFormSelect", "MagicWand", "Text", "Magnifier", "Pick"
+        };
+
+        /// <summary>A text layer's Surface is only ever a rendered cache of its TextLayerData,
+        /// regenerated from scratch on every re-edit, move, resize, or document resize (see
+        /// Services/TextLayerRenderer). Painting into it directly with any other tool would look
+        /// right until the next time that regeneration happens - which would silently wipe the
+        /// paint back out, since it isn't part of what gets re-rendered. Rasterizing the layer
+        /// first, the instant a painting tool is about to touch it, is the same explicit action the
+        /// Layers panel's own Rasterize button performs, just triggered automatically instead of
+        /// requiring the user to notice and do it themselves first.</summary>
+        private void RasterizeActiveLayerIfText()
+        {
+            if (_document?.ActiveLayer.Text == null) return;
+            _history.PushUndoState(_document, "Rasterize Text Layer");
+            _document.RasterizeLayer(_document.ActiveLayerIndex);
+        }
+
         private void Canvas_MouseDown(object sender, CanvasMouseEventArgs e)
         {
             try
@@ -942,9 +1014,12 @@ namespace PaintClone
                     ((PolygonTool)_tools["Polygon"]).Finish(_ctx);
                     return;
                 }
-                // A click inside an existing selection with a selection tool is about to start a
-                // move, not a new selection - switch to a move cursor for the duration of the drag.
-                bool willMoveSelection = _currentToolKey is "Select" or "FreeFormSelect" or "MagicWand"
+                if (!ToolsThatDontTouchLayerPixels.Contains(_currentToolKey)) RasterizeActiveLayerIfText();
+
+                // A click inside an existing selection (or a still-pending shape, for a drag-shape
+                // tool) is about to start a move, not a new one - switch to a move cursor for the
+                // duration of the drag.
+                bool willMoveSelection = CurrentToolHandlesSelection()
                     && _selection.HasSelection && _selection.Contains(e.DocPointInt);
                 _tools[_currentToolKey].OnMouseDown(_ctx, e);
                 if (willMoveSelection) _canvas.Cursor = Cursors.SizeAll;
@@ -1388,18 +1463,81 @@ namespace PaintClone
         // Text tool overlay
         // ===================================================================
 
-        private void BeginTextEditing(Rect docRect)
+        /// <summary>Starts editing a brand-new text layer, from the Text tool - either a plain
+        /// click (autoWidth: point text, grows in both directions, never wraps) or a click-drag
+        /// (autoWidth false: paragraph text, wraps within docRect's width). Nothing exists yet -
+        /// CommitActiveTextBox will create a layer, via AddTextLayer, if anything gets typed.</summary>
+        private void BeginTextEditing(Rect docRect, bool autoWidth)
         {
             CommitActiveTextBox();
-            _activeTextDocRect = docRect;
+            _editingLayerIndex = -1;
+            StartTextBoxUI(docRect, "", _textFontFamily, _textFontSize, _textBold, _textItalic, _textUnderline, _colors.Foreground, autoWidth);
+        }
 
-            double boxW = docRect.Width * _zoom;
-            double boxH = docRect.Height * _zoom;
+        /// <summary>Re-opens the active layer's existing text for editing - the Photoshop-style
+        /// "click a type layer" gesture (here, a click on the Text tool that lands inside a text
+        /// layer that's already active - see TextTool.OnMouseDown). CommitActiveTextBox will update
+        /// that same layer's TextLayerData in place rather than creating a new layer.</summary>
+        private void BeginTextEditOnActiveLayer()
+        {
+            int index = _document.ActiveLayerIndex;
+            var layer = _document.Layers[index];
+            if (layer.Text == null) return;
+            CommitActiveTextBox(); // in case some *other* text box was somehow still open
+            _editingLayerIndex = index;
+            var t = layer.Text;
+            // TextLayerData.X/Y is where pixels actually get blitted, which is 1 *screen* pixel
+            // inside the live box's own border (see the borderInsetDoc comment in
+            // CommitActiveTextBox) - reverse that here so re-opening the box lines its text back
+            // up exactly where it already was, rather than nudging it down-right by a pixel.
+            double inset = 1.0 / _zoom;
+            var outerRect = new Rect(t.X - inset, t.Y - inset, t.Width, t.Height);
+
+            // Hide this layer's already-rendered pixels for the duration of the edit - the live
+            // TextBox about to open shows the same text, so leaving both on screen draws it twice.
+            // Display-only (see PaintCanvas.SuppressedLayerIndex); the layer itself is untouched.
+            _canvas.SuppressedLayerIndex = index;
+            _canvas.RefreshLayerVisibility();
+
+            StartTextBoxUI(outerRect, t.Content, t.FontFamily, t.FontSize, t.Bold, t.Italic, t.Underline, t.Color, t.AutoWidth);
+
+            // TextTool may have just switched the active layer to this one (clicking on any
+            // visible text layer re-opens IT, not only whichever layer happened to be active
+            // already) - refresh the panel so its highlighted row actually matches. Best-effort,
+            // deliberately after the box above is already live and focused: editing must work
+            // regardless of whether this succeeds.
+            try { LayersPanelCtl.Refresh(); } catch { /* cosmetic only */ }
+        }
+
+        /// <summary>Shared setup for the live WPF TextBox overlay + its move/resize handles, used
+        /// by both BeginTextEditing (empty, brand new) and BeginTextEditOnActiveLayer (pre-filled
+        /// from an existing text layer's data). Leaves the caret at the end of whatever content it
+        /// was given - position 0 for a fresh, empty box, or ready to keep typing at the end of
+        /// existing text for a re-edit. Simpler and more robust than trying to land the caret at
+        /// the exact point that was clicked (an earlier version of this tried exactly that, via
+        /// GetCharacterIndexFromPoint deferred a dispatcher tick for layout to catch up - correct
+        /// in principle, but fragile in practice and not what was actually being asked for here).</summary>
+        private void StartTextBoxUI(Rect outerDocRect, string content, string fontFamily, double fontSize,
+            bool bold, bool italic, bool underline, Color color, bool autoWidth)
+        {
+            _activeTextDocRect = outerDocRect;
+            _textFontFamily = fontFamily;
+            _textFontSize = fontSize;
+            _textBold = bold;
+            _textItalic = italic;
+            _textUnderline = underline;
+            _textEditColor = color;
+            _textAutoWidth = autoWidth;
+
+            double boxW = outerDocRect.Width * _zoom;
+            double boxH = outerDocRect.Height * _zoom;
 
             _activeTextBox = new TextBox
             {
                 AcceptsReturn = true,
-                TextWrapping = TextWrapping.Wrap,
+                // Point text never wraps - it grows instead (see AutoGrowTextBox) - while
+                // paragraph text wraps within its fixed width, same as before.
+                TextWrapping = autoWidth ? TextWrapping.NoWrap : TextWrapping.Wrap,
                 BorderBrush = Brushes.DimGray,
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(0), // eliminate WPF's theme-dependent default padding -
@@ -1409,21 +1547,34 @@ namespace PaintClone
                                              // doesn't know about, causing a visible shift between
                                              // what you typed and what gets committed
                 Background = Brushes.Transparent,
-                CaretBrush = new SolidColorBrush(_colors.Foreground),
-                FontFamily = new FontFamily(_textFontFamily),
-                FontSize = Math.Max(8, _textFontSize * _zoom),
-                FontWeight = _textBold ? FontWeights.Bold : FontWeights.Normal,
-                FontStyle = _textItalic ? FontStyles.Italic : FontStyles.Normal,
-                TextDecorations = _textUnderline ? TextDecorations.Underline : null,
-                Foreground = new SolidColorBrush(_colors.Foreground),
+                CaretBrush = new SolidColorBrush(color),
+                FontFamily = new FontFamily(fontFamily),
+                FontSize = Math.Max(8, fontSize * _zoom),
+                FontWeight = bold ? FontWeights.Bold : FontWeights.Normal,
+                FontStyle = italic ? FontStyles.Italic : FontStyles.Normal,
+                TextDecorations = underline ? TextDecorations.Underline : null,
+                Foreground = new SolidColorBrush(color),
                 Width = boxW,
-                Height = boxH
+                Height = boxH,
+                Text = content ?? ""
             };
-            Canvas.SetLeft(_activeTextBox, docRect.X * _zoom);
-            Canvas.SetTop(_activeTextBox, docRect.Y * _zoom);
+            // Refreshes the Font/Size/Style controls in the options bar to match whatever's being
+            // edited - most visible on a re-edit, where they'd otherwise keep showing whatever the
+            // *previous* piece of text (or the tool's own defaults) last left them at.
+            if (_currentToolKey == "Text") BuildToolOptions("Text");
+
+            Canvas.SetLeft(_activeTextBox, outerDocRect.X * _zoom);
+            Canvas.SetTop(_activeTextBox, outerDocRect.Y * _zoom);
             TextOverlayLayer.IsHitTestVisible = true;
             TextOverlayLayer.Children.Add(_activeTextBox);
-            _activeTextBox.LostKeyboardFocus += (s, e) => CommitActiveTextBox();
+
+            // Commit-on-focus-loss, but only once the box has genuinely held focus at some point.
+            // Without this guard, a box that never managed to take focus in the first place - or
+            // any stray focus event during setup - tears the editor straight back down before it
+            // can be typed into, which looks exactly like "clicking the text does nothing."
+            bool everFocused = false;
+            _activeTextBox.GotKeyboardFocus += (s, e) => everFocused = true;
+            _activeTextBox.LostKeyboardFocus += (s, e) => { if (everFocused) CommitActiveTextBox(); };
             _activeTextBox.TextChanged += (s, e) => AutoGrowTextBox();
 
             // Move handle at the top-left corner (circular, distinct from the square resize
@@ -1460,6 +1611,24 @@ namespace PaintClone
             TextOverlayLayer.Children.Add(_textResizeHandle);
 
             Keyboard.Focus(_activeTextBox);
+            _activeTextBox.CaretIndex = _activeTextBox.Text.Length;
+
+            // Focus again once layout has actually run. WPF refuses keyboard focus to an element
+            // that isn't visible yet, and an element added to the tree inside an event handler
+            // hasn't been measured/arranged at that point - so the call above can silently do
+            // nothing. Retrying after layout costs nothing when the first attempt already worked
+            // (re-focusing an already-focused element is a no-op) and is what guarantees the box
+            // is genuinely ready to type into rather than merely visible.
+            var box = _activeTextBox;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_activeTextBox != box) return; // already committed/replaced before this ran
+                if (!box.IsKeyboardFocusWithin)
+                {
+                    Keyboard.Focus(box);
+                    box.CaretIndex = box.Text.Length;
+                }
+            }), System.Windows.Threading.DispatcherPriority.Input);
         }
 
         private Border MakeMoveHandleVisual() => new Border
@@ -1486,10 +1655,12 @@ namespace PaintClone
             Canvas.SetTop(_textResizeHandle, Canvas.GetTop(_activeTextBox) + _activeTextBox.Height - 3);
         }
 
-        /// <summary>Grows the text box's height to fit its content as the user types, so text never
-        /// gets clipped just because the original drag (or the last manual resize) was too short.
-        /// Only grows - never auto-shrinks, so a deliberately-enlarged box via the resize handle
-        /// isn't fought back down as soon as you delete a line.</summary>
+        /// <summary>Grows the text box to fit its content as the user types, so text never gets
+        /// clipped just because the original drag (or the last manual resize) was too short. Always
+        /// grows height; also grows width when editing point text (_textAutoWidth), which never
+        /// wraps and so has no fixed width to clip against in the first place. Only ever grows -
+        /// never auto-shrinks, so a deliberately-enlarged box via the resize handle isn't fought
+        /// back down as soon as you delete a line.</summary>
         private void AutoGrowTextBox()
         {
             if (_activeTextBox == null) return;
@@ -1499,21 +1670,40 @@ namespace PaintClone
             string textForMeasurement = string.IsNullOrEmpty(tb.Text) ? " " : tb.Text;
             var ft = new FormattedText(
                 textForMeasurement, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                typeface, tb.FontSize, Brushes.Black, VisualTreeHelper.GetDpi(this).PixelsPerDip)
+                typeface, tb.FontSize, Brushes.Black, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+
+            bool resized = false;
+            if (_textAutoWidth)
             {
-                MaxTextWidth = Math.Max(1, tb.Width - 8) // rough allowance for the box's own border/padding
-            };
+                // Point text: leaving MaxTextWidth unconstrained is what makes ft.Width reflect
+                // each line's own natural width instead of being wrapped/clipped against a box
+                // width that, for point text, doesn't really exist.
+                double neededWidth = ft.Width + 10;
+                if (neededWidth > tb.Width) { tb.Width = neededWidth; resized = true; }
+            }
+            else
+            {
+                ft.MaxTextWidth = Math.Max(1, tb.Width - 8); // rough allowance for the box's own border/padding
+            }
 
             double neededHeight = ft.Height + 10; // small buffer so the caret/last line is never flush against the edge
-            if (neededHeight > tb.Height)
+            if (neededHeight > tb.Height) { tb.Height = neededHeight; resized = true; }
+
+            if (resized)
             {
-                tb.Height = neededHeight;
-                _activeTextDocRect = new Rect(_activeTextDocRect.X, _activeTextDocRect.Y, _activeTextDocRect.Width, neededHeight / _zoom);
+                _activeTextDocRect = new Rect(_activeTextDocRect.X, _activeTextDocRect.Y, tb.Width / _zoom, tb.Height / _zoom);
                 PositionTextResizeHandle();
                 PositionTextMoveHandle();
             }
         }
 
+        /// <summary>Closes the live TextBox overlay and turns what it holds into (or updates) a
+        /// text layer - never rasterizing text directly into whatever the active layer happened to
+        /// be, the way classic Paint's text tool did. The actual pixel rendering is delegated to
+        /// Services/TextLayerRenderer, which is also what a later move/resize/edit or a document
+        /// resize re-invokes - this is only responsible for turning the live TextBox's current
+        /// state into a TextLayerData and deciding whether that's a new layer or an update to the
+        /// one being re-edited.</summary>
         private void CommitActiveTextBox()
         {
             if (_activeTextBox == null) return;
@@ -1527,59 +1717,70 @@ namespace PaintClone
             TextOverlayLayer.IsHitTestVisible = false;
             _activeTextBox = null;
 
-            if (string.IsNullOrEmpty(text)) return;
+            // Stop hiding the layer that was being edited, on every exit path from here - whether
+            // the text is about to be updated, deleted, or left unchanged. Cleared before any of
+            // the branching below so a stale index can't outlive the layer it referred to and end
+            // up suppressing an unrelated layer once indices shift (e.g. the delete path).
+            _canvas.SuppressedLayerIndex = -1;
+            _canvas.RefreshLayerVisibility();
 
-            _history.PushUndoState(_document, "Text");
+            int editingIndex = _editingLayerIndex;
+            _editingLayerIndex = -1;
 
-            var typeface = new Typeface(new FontFamily(_textFontFamily),
-                _textItalic ? FontStyles.Italic : FontStyles.Normal,
-                _textBold ? FontWeights.Bold : FontWeights.Normal,
-                FontStretches.Normal);
-
-            var formatted = new FormattedText(
-                text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                typeface, _textFontSize, new SolidColorBrush(_colors.Foreground),
-                VisualTreeHelper.GetDpi(this).PixelsPerDip)
+            if (string.IsNullOrEmpty(text))
             {
-                MaxTextWidth = Math.Max(1, _activeTextDocRect.Width),
-                // Explicitly untrimmed: left to the default, committed text could come out as a
-                // single line ending in "..." instead of the multiple wrapped lines that were
-                // visible while typing. MaxTextHeight is deliberately not set - it's unbounded by
-                // default, and WPF rejects PositiveInfinity for it.
-                Trimming = TextTrimming.None
-            };
-            if (_textUnderline) formatted.SetTextDecorations(TextDecorations.Underline);
-
-            var visual = new DrawingVisual();
-            // Aliased text keeps every pixel fully opaque or fully clear. Anti-aliased text has
-            // soft edge pixels, which look better at larger sizes but need the alpha-blending
-            // commit path (below) rather than the hard threshold, or the softness turns into
-            // transparent fringing.
-            TextOptions.SetTextRenderingMode(visual,
-                _ctx.AntiAlias ? TextRenderingMode.ClearType : TextRenderingMode.Aliased);
-            TextOptions.SetTextFormattingMode(visual, TextFormattingMode.Display);
-            using (var dc = visual.RenderOpen())
-            {
-                dc.DrawText(formatted, new Point(0, 0));
+                // Typing everything away on an existing text layer deletes it outright - an empty
+                // text layer serves no purpose and would just be an invisible, confusing entry
+                // sitting in the Layers panel. A brand-new, never-created box just vanishes, as
+                // before.
+                if (editingIndex >= 0 && editingIndex < _document.Layers.Count)
+                {
+                    _history.PushUndoState(_document, "Delete Text Layer");
+                    _document.DeleteLayer(editingIndex);
+                }
+                return;
             }
-            int w = Math.Max(1, (int)_activeTextDocRect.Width);
-            int h = Math.Max(1, (int)Math.Max(_activeTextDocRect.Height, formatted.Height));
-            var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-            rtb.Render(visual);
-            var wb = new WriteableBitmap(rtb);
-            // Thresholding is what stops aliased text leaving semi-transparent fringes. With
-            // anti-aliasing on, those soft pixels are the point, so they're kept and the blend
-            // happens at blit time instead.
-            if (!_ctx.AntiAlias) new RasterSurface(wb).ThresholdAlpha();
 
             // The live box's text starts 1 screen px inside its border (BorderThickness=1) -
-            // convert that fixed screen-space inset to document space so the commit lands at the
-            // same effective position the live preview showed, not at the box's outer edge.
+            // convert that fixed screen-space inset to document space so the layer's stored
+            // position matches the same effective spot the live preview showed, not the box's
+            // outer edge.
             double borderInsetDoc = 1.0 / _zoom;
-            int blitX = (int)Math.Round(_activeTextDocRect.X + borderInsetDoc);
-            int blitY = (int)Math.Round(_activeTextDocRect.Y + borderInsetDoc);
-            _document.Surface.Blit(wb, blitX, blitY, transparentColor: Colors.Transparent);
-            _document.MarkDirty();
+            var data = new TextLayerData
+            {
+                Content = text,
+                FontFamily = _textFontFamily,
+                FontSize = _textFontSize,
+                Bold = _textBold,
+                Italic = _textItalic,
+                Underline = _textUnderline,
+                Color = _textEditColor,
+                AntiAlias = _ctx.AntiAlias,
+                AutoWidth = _textAutoWidth,
+                X = _activeTextDocRect.X + borderInsetDoc,
+                Y = _activeTextDocRect.Y + borderInsetDoc,
+                Width = Math.Max(1, _activeTextDocRect.Width),
+                Height = Math.Max(1, _activeTextDocRect.Height)
+            };
+
+            if (editingIndex >= 0 && editingIndex < _document.Layers.Count && _document.Layers[editingIndex].Text != null)
+            {
+                _history.PushUndoState(_document, "Edit Text");
+                _document.Layers[editingIndex].Text = data;
+                _document.RefreshTextLayer(_document.Layers[editingIndex]);
+                _document.ActiveLayerIndex = editingIndex;
+            }
+            else
+            {
+                _history.PushUndoState(_document, "Add Text Layer");
+                // Named after its own content (trimmed, single-line) rather than a generic
+                // "Layer N" - closer to how Photoshop's type layers name themselves, and far more
+                // useful for telling several text layers apart at a glance in the Layers panel.
+                string name = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                if (name.Length > 24) name = name.Substring(0, 24) + "...";
+                if (name.Length == 0) name = "Text";
+                _document.AddTextLayer(data, name);
+            }
         }
 
         // ===================================================================
@@ -1598,15 +1799,19 @@ namespace PaintClone
             if (!ConfirmDiscardChanges()) return;
             var dlg = new OpenFileDialog
             {
-                Filter = "All Picture Files|*.bmp;*.dib;*.png;*.jpg;*.jpeg;*.gif;*.tif;*.tiff;*.wdp;*.jxr;*.ico;*.tga|" +
+                Filter = "Splash Project (*.splash)|*.splash|" +
+                         "All Picture Files|*.bmp;*.dib;*.png;*.jpg;*.jpeg;*.gif;*.tif;*.tiff;*.wdp;*.jxr;*.ico;*.tga|" +
                          "Bitmap Files|*.bmp;*.dib|PNG Files|*.png|JPEG Files|*.jpg;*.jpeg|GIF Files|*.gif|" +
                          "TIFF Files|*.tif;*.tiff|JPEG XR Files|*.wdp;*.jxr|Icon Files|*.ico|Targa Files|*.tga"
             };
             if (dlg.ShowDialog(this) != true) return;
             try
             {
-                var wb = LoadBitmap(dlg.FileName);
-                _document = PaintDocument.FromBitmap(wb, dlg.FileName);
+                // Only the project format keeps layers/text objects intact - everything else here
+                // is a flat picture format, opened as a single Background layer just like before.
+                _document = IsProjectFile(dlg.FileName)
+                    ? SplashProjectFile.Load(dlg.FileName)
+                    : PaintDocument.FromBitmap(LoadBitmap(dlg.FileName), dlg.FileName);
                 WireDocumentLayerEvents();
                 _canvas.SetDocument(_document);
                 _canvas.Zoom = _zoom;
@@ -1719,13 +1924,22 @@ namespace PaintClone
         private void Save_Click(object sender, RoutedEventArgs e) => DoSave();
         private void SaveAs_Click(object sender, RoutedEventArgs e) => DoSaveAs();
 
+        /// <summary>The one format that isn't a flat exported picture - see SplashProjectFile.
+        /// Kept as an extension check (not a stored enum/flag on PaintDocument) since it's a
+        /// property of the *file*, not something that needs to survive independently of FilePath.</summary>
+        private static bool IsProjectFile(string path) =>
+            !string.IsNullOrEmpty(path) && Path.GetExtension(path).Equals(".splash", StringComparison.OrdinalIgnoreCase);
+
         private bool DoSave()
         {
             FinalizeFloatingSelection();
             if (_document.FilePath == null) return DoSaveAs();
             try
             {
-                SaveBitmap(_document.FilePath, _document.GetFlattenedBitmap(), _document.LastSaveFilterIndex);
+                if (IsProjectFile(_document.FilePath))
+                    SplashProjectFile.Save(_document, _document.FilePath);
+                else
+                    SaveBitmap(_document.FilePath, _document.GetFlattenedBitmap(), _document.LastSaveFilterIndex);
                 _document.IsDirty = false;
                 UpdateTitle();
                 return true;
@@ -1740,6 +1954,8 @@ namespace PaintClone
         // Matches classic Paint's own Save As format list: four BMP color-depth variants first,
         // then the other formats it supported. FilterIndex (1-based, matches this list's order)
         // is what actually decides the pixel depth for BMP - all four share the .bmp extension.
+        // Splash Project is appended at the end rather than given pride of place at the front
+        // specifically so none of those existing, order-dependent index numbers had to shift.
         private const string SaveFilter =
             "Monochrome Bitmap (*.bmp;*.dib)|*.bmp;*.dib|" +
             "16 Color Bitmap (*.bmp;*.dib)|*.bmp;*.dib|" +
@@ -1751,7 +1967,8 @@ namespace PaintClone
             "PNG (*.png)|*.png|" +
             "JPEG XR / HD Photo (*.wdp;*.jxr)|*.wdp;*.jxr|" +
             "Windows Icon (*.ico)|*.ico|" +
-            "Targa (*.tga)|*.tga";
+            "Targa (*.tga)|*.tga|" +
+            "Splash Project - keeps layers and text editable (*.splash)|*.splash";
 
         private bool DoSaveAs()
         {
@@ -1764,23 +1981,29 @@ namespace PaintClone
             };
             if (dlg.ShowDialog(this) != true) return false;
 
-            // .ico gets an extra step: which sizes to embed, with a preview of how the artwork
-            // holds up at each. Cancelling that dialog cancels the whole save rather than quietly
-            // writing a default set the user never agreed to.
-            var flattened = _document.GetFlattenedBitmap();
-            IReadOnlyList<int> icoSizes = null;
-            if (Path.GetExtension(dlg.FileName).ToLowerInvariant() == ".ico")
-            {
-                var icoDlg = new IcoExportDialog(flattened) { Owner = this };
-                if (icoDlg.ShowDialog() != true) return false;
-                icoSizes = icoDlg.SelectedSizes;
-            }
-
             try
             {
-                SaveBitmap(dlg.FileName, flattened, dlg.FilterIndex, icoSizes);
+                if (IsProjectFile(dlg.FileName))
+                {
+                    SplashProjectFile.Save(_document, dlg.FileName);
+                }
+                else
+                {
+                    // .ico gets an extra step: which sizes to embed, with a preview of how the
+                    // artwork holds up at each. Cancelling that dialog cancels the whole save
+                    // rather than quietly writing a default set the user never agreed to.
+                    var flattened = _document.GetFlattenedBitmap();
+                    IReadOnlyList<int> icoSizes = null;
+                    if (Path.GetExtension(dlg.FileName).ToLowerInvariant() == ".ico")
+                    {
+                        var icoDlg = new IcoExportDialog(flattened) { Owner = this };
+                        if (icoDlg.ShowDialog() != true) return false;
+                        icoSizes = icoDlg.SelectedSizes;
+                    }
+                    SaveBitmap(dlg.FileName, flattened, dlg.FilterIndex, icoSizes);
+                    _document.LastSaveFilterIndex = dlg.FilterIndex;
+                }
                 _document.FilePath = dlg.FileName;
-                _document.LastSaveFilterIndex = dlg.FilterIndex;
                 _document.IsDirty = false;
                 UpdateTitle();
                 return true;
@@ -2073,18 +2296,25 @@ namespace PaintClone
             SelectTool("Select");
         }
 
+        /// <summary>True for any tool that can move/resize the current selection on its own - the
+        /// three dedicated selection tools, always, plus any drag-shape tool (Rectangle, Ellipse,
+        /// ...) while it's the active tool, since DragShapeToolBase now handles its own just-drawn
+        /// pending shape directly instead of forcing a detour through the Select tool.</summary>
+        private bool CurrentToolHandlesSelection() =>
+            _currentToolKey is "Select" or "FreeFormSelect" or "MagicWand"
+            || (_tools.TryGetValue(_currentToolKey, out var t) && t is DragShapeToolBase);
+
         /// <summary>Shows/hides/repositions the 4 corner resize handles on the current selection.
-        /// Only offered when: on the Select tool (Free-Form Select/Magic Wand selections are
-        /// mask-based and resizing a mask isn't implemented - see SelectionManager.ResizeTo), and
-        /// a selection actually exists. Called whenever the selection changes, the tool changes,
-        /// or the zoom changes, so the handles never end up stale relative to what's on screen.</summary>
+        /// Only offered when on a tool that knows how to act on a selection (see
+        /// CurrentToolHandlesSelection) and a selection actually exists. Called whenever the
+        /// selection changes, the tool changes, or the zoom changes, so the handles never end up
+        /// stale relative to what's on screen.</summary>
         private void RefreshSelectionHandles()
         {
             foreach (var h in _selectionResizeHandles) HandleLayer.Children.Remove(h);
             _selectionResizeHandles.Clear();
 
-            bool eligible = (_currentToolKey is "Select" or "FreeFormSelect" or "MagicWand")
-                && _document != null && _selection.HasSelection;
+            bool eligible = CurrentToolHandlesSelection() && _document != null && _selection.HasSelection;
             if (!eligible) return;
 
             var b = _selection.Bounds.Value;
@@ -2469,6 +2699,7 @@ namespace PaintClone
         private void ApplyTransform(Action<RasterSurface, RasterSurface> op, string label)
         {
             FinalizeFloatingSelection();
+            RasterizeActiveLayerIfText();
             _history.PushUndoState(_document, label);
             var src = _document.Surface;
             var dst = new RasterSurface(src.Width, src.Height, _colors.Background);
@@ -2514,6 +2745,7 @@ namespace PaintClone
             if (TryTransformSelection(asSelectionTransform, $"Rotate Selection {degrees}\u00b0")) return;
 
             FinalizeFloatingSelection();
+            RasterizeActiveLayerIfText();
             _history.PushUndoState(_document, $"Rotate {degrees}\u00b0");
             var src = _document.Surface;
             bool swap = degrees != 180;
@@ -2593,6 +2825,7 @@ namespace PaintClone
         private void ClearImage_Click(object sender, RoutedEventArgs e)
         {
             FinalizeFloatingSelection();
+            RasterizeActiveLayerIfText();
             _history.PushUndoState(_document, "Clear Image");
             _document.Surface.Clear(_colors.Background);
             _document.MarkDirty();

@@ -22,9 +22,26 @@ namespace PaintClone.Tools
 
         public System.Action<string> SetStatusText;
         public System.Action RequestCommit; // called by a tool when it wants MainWindow to snapshot+merge preview
-        public System.Action<Rect> BeginTextEditing;
+        /// <summary>autoWidth: true for a plain click - "point text" that grows in both directions
+        /// as you type and never wraps, matching Photoshop's Type tool; false for a click-drag -
+        /// "paragraph text" with a fixed wrap width (the rect's own width).</summary>
+        public System.Action<Rect, bool> BeginTextEditing;
+        /// <summary>Re-opens the active layer's existing text for editing (a Photoshop-style
+        /// click-to-edit a type layer) instead of starting a brand-new one - called by TextTool
+        /// when a click lands inside a text layer, which it makes the active layer first if it
+        /// wasn't already.</summary>
+        public System.Action BeginTextEditOnActiveLayer;
         public System.Action<string> RequestToolSwitch; // called by a tool that wants MainWindow to switch tools for it
         public System.Action<PendingShape> BeginPendingShape; // hands MainWindow a drawn-but-not-yet-rasterized shape
+
+        /// <summary>Commits whatever selection/pending shape is currently floating, in place,
+        /// without switching tools - called by a drag-shape tool's own OnMouseDown when the user
+        /// clicks outside a shape it just drew, right before that same click starts the next shape.
+        /// A no-op if nothing is floating. This is deliberately narrower than the
+        /// RequestToolSwitch-driven finalize MainWindow uses when switching to a *different* tool
+        /// (which also restores the drawing tool afterwards) - here there's nothing to restore,
+        /// since the tool never left in the first place.</summary>
+        public System.Action FinalizePendingShape;
 
         /// <summary>Arrowhead style for the Arrow tool.</summary>
         public ArrowStyle ArrowStyle = ArrowStyle.End;
@@ -79,8 +96,12 @@ namespace PaintClone.Tools
         /// <summary>Undo-history label, e.g. "Rectangle".</summary>
         public string Label;
 
-        /// <summary>Which tool drew this, so the app can switch back to it once the shape is
-        /// dropped - otherwise you'd be left on the Select tool after every single shape.</summary>
+        /// <summary>Which tool drew this. The drawing tool itself stays active the whole time this
+        /// shape is pending - see DragShapeToolBase, which handles moving its own just-drawn shape
+        /// directly rather than detouring through the Select tool - so this is really only read if
+        /// the *user* explicitly switches to some other tool while the shape is still pending
+        /// (MainWindow.SelectTool then finalizes it and switches back to this, so you're not left
+        /// stranded on whatever tool you happened to pick next).</summary>
         public string OriginToolKey;
     }
 

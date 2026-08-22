@@ -116,6 +116,7 @@ namespace PaintClone.Controls
         public void SetDocument(PaintDocument doc)
         {
             Document = doc;
+            SuppressedLayerIndex = -1; // an index into the *previous* document means nothing here
             RebuildLayerImages();
             PreviewBitmap = new WriteableBitmap(doc.Width, doc.Height, 96, 96, PixelFormats.Pbgra32, null);
             PreviewSurface = new RasterSurface(PreviewBitmap);
@@ -170,15 +171,32 @@ namespace PaintClone.Controls
             UpdateSize();
         }
 
+        /// <summary>Index of a layer to hide *on screen only*, or -1 for none. Used while a text
+        /// layer is being live-edited: the editable TextBox overlay already shows that text, so
+        /// leaving the layer's own rendered pixels on screen underneath it draws the same text
+        /// twice, slightly offset - which is what "two texts overlapping" looks like, and why
+        /// editing away the live copy still left the baked one behind.
+        ///
+        /// Deliberately display-only: it does NOT touch the layer's pixels or its Visible flag.
+        /// Both of those are captured in HistoryManager's undo snapshots, so hiding the text that
+        /// way would leak a transient editing state into the document's real history (undoing to
+        /// mid-edit would restore a blanked or hidden layer). Nothing here is part of the document
+        /// at all, so there's nothing for undo to capture.</summary>
+        public int SuppressedLayerIndex { get; set; } = -1;
+
+        /// <summary>Re-applies layer visibility after changing <see cref="SuppressedLayerIndex"/>.</summary>
+        public void RefreshLayerVisibility() => SyncLayerSizesAndVisibility();
+
         private void SyncLayerSizesAndVisibility()
         {
             if (Document == null) return;
             double w = Document.Width * _zoom, h = Document.Height * _zoom;
-            for (int i = 0; i < LayerImages.Count; i++)
+            for (int i = 0; i < LayerImages.Count && i < Document.Layers.Count; i++)
             {
                 LayerImages[i].Width = w;
                 LayerImages[i].Height = h;
-                LayerImages[i].Visibility = Document.Layers[i].Visible ? Visibility.Visible : Visibility.Collapsed;
+                bool visible = Document.Layers[i].Visible && i != SuppressedLayerIndex;
+                LayerImages[i].Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             }
         }
 

@@ -14,11 +14,14 @@ namespace PaintClone.Dialogs
         public double NewDpi { get; private set; }
 
         private readonly List<SizePreset> _customPresets;
+        private readonly int _originalWidth, _originalHeight;
         private bool _suppress;
 
         public AttributesDialog(int width, int height, double dpi)
         {
             InitializeComponent();
+            _originalWidth = width;
+            _originalHeight = height;
             _customPresets = CanvasSizePresetStore.Load();
 
             WidthBox.Text = width.ToString();
@@ -97,6 +100,10 @@ namespace PaintClone.Dialogs
         {
             if (_suppress) return;
             PresetCombo.SelectedIndex = 0;
+            // Typing a real size by hand after clicking Clear cancels that request - otherwise OK
+            // would silently wipe the picture to 1x1 regardless of whatever was just typed here,
+            // since ClearRequested (not these boxes) is what MainWindow actually acts on.
+            ClearRequested = false;
         }
 
         /// <summary>Shows the physical size the picture will print at, which is the only place the
@@ -135,6 +142,27 @@ namespace PaintClone.Dialogs
                 MessageBox.Show(this, "Please enter a valid resolution between 1 and 4800 DPI.", "Attributes", MessageBoxButton.OK, MessageBoxImage.Exclamation);
                 return;
             }
+
+            // Confirm before anything destructive - shrinking crops away whatever falls outside
+            // the new size, and Clear wipes the picture entirely. A DPI-only change or growing the
+            // canvas never loses pixels, so those go through without asking. Ctrl+Z can still undo
+            // either one afterward, but that's not obvious from inside this dialog, so it's worth
+            // spelling out rather than letting a size typo or a stray Clear click through silently.
+            if (ClearRequested)
+            {
+                if (MessageBox.Show(this,
+                        "This clears the entire picture. You can still undo it afterward with Ctrl+Z, but not from this dialog. Continue?",
+                        "Attributes", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                    return;
+            }
+            else if (w < _originalWidth || h < _originalHeight)
+            {
+                if (MessageBox.Show(this,
+                        $"The new size ({w} x {h}) is smaller than the current picture ({_originalWidth} x {_originalHeight}) - anything outside it will be cropped away. You can still undo this afterward with Ctrl+Z. Continue?",
+                        "Attributes", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                    return;
+            }
+
             NewWidth = w;
             NewHeight = h;
             NewDpi = dpi;
@@ -143,9 +171,12 @@ namespace PaintClone.Dialogs
 
         private void Clear_Click(object sender, RoutedEventArgs e)
         {
-            ClearRequested = true;
+            // Set the boxes first: they're wired to Size_Changed, which resets ClearRequested to
+            // false on any hand-edit (see there) - setting the flag itself afterward is what makes
+            // it stick instead of immediately cancelling itself out.
             WidthBox.Text = "1";
             HeightBox.Text = "1";
+            ClearRequested = true;
         }
     }
 }

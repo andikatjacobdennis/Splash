@@ -60,7 +60,14 @@ namespace PaintClone.Dialogs
                 cb.Checked += (s, e) => _document.SetLayerVisible(layerIndex, true);
                 cb.Unchecked += (s, e) => _document.SetLayerVisible(layerIndex, false);
 
-                var text = new TextBlock { Text = layer.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = isActive ? FontWeights.Bold : FontWeights.Normal };
+                string label = layer.Text != null ? $"[T] {layer.Name}" : layer.Name;
+                var text = new TextBlock
+                {
+                    Text = label,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    FontWeight = isActive ? FontWeights.Bold : FontWeights.Normal,
+                    ToolTip = layer.Text != null ? "Text layer - click into it with the Text tool to edit it again" : null
+                };
 
                 panel.Children.Add(cb);
                 panel.Children.Add(text);
@@ -79,6 +86,7 @@ namespace PaintClone.Dialogs
             MergeBtn.IsEnabled = _document.ActiveLayerIndex > 0;
             UpBtn.IsEnabled = _document.ActiveLayerIndex < _document.Layers.Count - 1;
             DownBtn.IsEnabled = _document.ActiveLayerIndex > 0;
+            RasterizeBtn.IsEnabled = _document.ActiveLayer.Text != null;
         }
 
         private void AddLayer_Click(object sender, RoutedEventArgs e)
@@ -109,6 +117,12 @@ namespace PaintClone.Dialogs
         {
             _history.PushUndoState(_document, "Merge Layers");
             _document.MergeDown(_document.ActiveLayerIndex);
+        }
+
+        private void Rasterize_Click(object sender, RoutedEventArgs e)
+        {
+            _history.PushUndoState(_document, "Rasterize Text Layer");
+            _document.RasterizeLayer(_document.ActiveLayerIndex);
         }
     }
 }

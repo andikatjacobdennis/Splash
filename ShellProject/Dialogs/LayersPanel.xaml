@@ -3,14 +3,16 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Segoe UI" FontSize="11">
     <DockPanel Margin="6">
-        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
-            <Button x:Name="AddBtn" Content="Add" Width="40" Margin="0,0,3,0" Click="AddLayer_Click" ToolTip="Add a new layer"/>
-            <Button x:Name="DeleteBtn" Content="Del" Width="34" Margin="0,0,3,0" Click="DeleteLayer_Click" ToolTip="Delete the active layer"/>
-            <Button x:Name="UpBtn" Content="&#9650;" Width="26" Margin="0,0,3,0" Click="MoveUp_Click" ToolTip="Move layer up"/>
-            <Button x:Name="DownBtn" Content="&#9660;" Width="26" Margin="0,0,3,0" Click="MoveDown_Click" ToolTip="Move layer down"/>
-            <Button x:Name="MergeBtn" Content="Merge" Width="44" Click="MergeDown_Click" ToolTip="Merge down into the layer below"/>
-        </StackPanel>
-        <TextBlock DockPanel.Dock="Top" Text="Click a layer to make it active. Checkbox toggles visibility."
+        <WrapPanel DockPanel.Dock="Bottom" HorizontalAlignment="Center" Margin="0,6,0,0">
+            <Button x:Name="AddBtn" Content="Add" Width="40" Margin="0,0,3,3" Click="AddLayer_Click" ToolTip="Add a new layer"/>
+            <Button x:Name="DeleteBtn" Content="Del" Width="34" Margin="0,0,3,3" Click="DeleteLayer_Click" ToolTip="Delete the active layer"/>
+            <Button x:Name="UpBtn" Content="&#9650;" Width="26" Margin="0,0,3,3" Click="MoveUp_Click" ToolTip="Move layer up"/>
+            <Button x:Name="DownBtn" Content="&#9660;" Width="26" Margin="0,0,3,3" Click="MoveDown_Click" ToolTip="Move layer down"/>
+            <Button x:Name="MergeBtn" Content="Merge" Width="44" Margin="0,0,3,3" Click="MergeDown_Click" ToolTip="Merge down into the layer below"/>
+            <Button x:Name="RasterizeBtn" Content="Rasterize" Width="56" Margin="0,0,0,3" Click="Rasterize_Click"
+                    ToolTip="Convert this text layer to ordinary pixels - it stops being re-editable"/>
+        </WrapPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Click a layer to make it active. Checkbox toggles visibility. Click into a text layer ([T]) with the Text tool to edit it again."
                    FontSize="9" Foreground="{DynamicResource PsTextDim}" Margin="2,4,0,4" TextWrapping="Wrap"/>
         <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1" Background="{DynamicResource PsContentBg}">
             <ListBox x:Name="LayersList" BorderThickness="0" Background="Transparent"/>

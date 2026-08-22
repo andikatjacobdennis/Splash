@@ -176,7 +176,17 @@
                                 <Rectangle x:Name="CanvasResizePreview" Stroke="Black" StrokeDashArray="4,2" Fill="Transparent"
                                            IsHitTestVisible="False" Visibility="Collapsed"
                                            HorizontalAlignment="Left" VerticalAlignment="Top"/>
-                                <Canvas x:Name="TextOverlayLayer" Background="Transparent" IsHitTestVisible="False"/>
+                                <!-- No Background: a Panel is only hit-testable across its own
+                                     (otherwise-empty) area where it actually paints something, so a
+                                     null Background here is what lets a click that lands *outside*
+                                     the live TextBox/handles - but still inside this layer's overall
+                                     bounds - fall through to the canvas underneath instead of being
+                                     silently swallowed. The TextBox and handles are still clickable
+                                     regardless: each has its own non-null Background, independent of
+                                     this Canvas's. IsHitTestVisible itself still needs to flip on
+                                     while editing, or the child controls it hosts aren't reachable
+                                     either - see MainWindow.StartTextBoxUI/CommitActiveTextBox. -->
+                                <Canvas x:Name="TextOverlayLayer" IsHitTestVisible="False"/>
                                 <Canvas x:Name="HandleLayer"/>
                                 <Rectangle x:Name="EraserOutline" Stroke="Black" StrokeThickness="1" Fill="Transparent"
                                            IsHitTestVisible="False" Visibility="Collapsed"

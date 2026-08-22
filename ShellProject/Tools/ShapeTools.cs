@@ -19,10 +19,17 @@ namespace PaintClone.Tools
         /// the name with spaces stripped, which matches every current registration.</summary>
         public virtual string ToolKey => Name.Replace(" ", "");
 
-        protected bool _active;
+        /// <summary>Idle: nothing happening. Drawing: dragging out a brand-new shape. Moving:
+        /// repositioning a shape this same tool already drew, which is still pending (floating,
+        /// not yet rasterized) - the tool's own version of what Select/FreeFormSelect/MagicWand do
+        /// for their selections, so adjusting a just-drawn shape never requires switching tools.</summary>
+        protected enum Mode { Idle, Drawing, Moving }
+        protected Mode _mode = Mode.Idle;
         protected Point _start;
         protected MouseButton _button;
         private Point? _lastPreviewEnd;
+        private Point _moveAnchor;
+        private Int32Rect _moveOrigBounds;
 
         /// <summary>True for tools whose Shift constraint should snap the *direction* to 45-degree
         /// increments (which includes horizontal and vertical), rather than forcing a square
@@ -49,12 +56,25 @@ namespace PaintClone.Tools
 
         public virtual void OnMouseDown(ToolContext ctx, CanvasMouseEventArgs e)
         {
-            // Clear any marquee left over from the previous shape (see OnMouseUp below) so it
-            // doesn't linger, visually confusingly, while a new shape is being drawn.
-            if (ctx.Selection.HasSelection) ctx.Selection.Deselect(ctx.Document.Surface);
-            ctx.Canvas.ShowSelection(null);
+            // A shape this same tool drew earlier is still pending (floating, uncommitted) -
+            // clicking inside it moves it, exactly like Select/FreeFormSelect/MagicWand already do
+            // for their own selections, so nudging a just-drawn shape never means switching to
+            // Select and back. It's always already floating by construction (a pending shape is
+            // never anything else), so - unlike those tools - there's never a Lift step here.
+            if (ctx.Selection.HasSelection && ctx.Selection.Contains(e.DocPointInt))
+            {
+                _mode = Mode.Moving;
+                _moveAnchor = e.DocPointInt;
+                _moveOrigBounds = ctx.Selection.Bounds.Value;
+                return;
+            }
 
-            _active = true;
+            // Clicking outside a still-pending shape finalizes it right where it is, then starts
+            // drawing a new one with this same click - so laying down several shapes in a row
+            // never needs the tool re-picked in between. A no-op if nothing is pending.
+            ctx.FinalizePendingShape?.Invoke();
+
+            _mode = Mode.Drawing;
             _start = e.DocPointInt;
             _button = e.Button;
             _lastPreviewEnd = null;
@@ -62,7 +82,17 @@ namespace PaintClone.Tools
 
         public virtual void OnMouseMove(ToolContext ctx, CanvasMouseEventArgs e)
         {
-            if (!_active) return;
+            if (_mode == Mode.Moving)
+            {
+                int dx = (int)(e.DocPointInt.X - _moveAnchor.X);
+                int dy = (int)(e.DocPointInt.Y - _moveAnchor.Y);
+                ctx.Selection.MoveTo(_moveOrigBounds.X + dx, _moveOrigBounds.Y + dy);
+                ctx.Canvas.ClearPreview();
+                SelectRectTool.RenderFloating(ctx);
+                ctx.Canvas.ShowSelection(ctx.Selection.Bounds);
+                return;
+            }
+            if (_mode != Mode.Drawing) return;
             var end = ConstrainedEnd(e);
             _lastPreviewEnd = end;
             ctx.Canvas.ClearPreview();
@@ -75,8 +105,16 @@ namespace PaintClone.Tools
 
         public virtual void OnMouseUp(ToolContext ctx, CanvasMouseEventArgs e)
         {
-            if (!_active) return;
-            _active = false;
+            if (_mode == Mode.Moving)
+            {
+                // Nothing to commit - it's still just pending, exactly as before the move. No undo
+                // entry either: the document itself hasn't been touched yet (matching the existing
+                // handle-based resize, which is the same "still pending" case).
+                _mode = Mode.Idle;
+                return;
+            }
+            if (_mode != Mode.Drawing) return;
+            _mode = Mode.Idle;
             // Reuse whatever point the preview last actually showed, rather than recomputing from
             // this event's own coordinates - those can genuinely differ from the last MouseMove's
             // position (a physical button release rarely lands at the exact same pixel as the last
@@ -94,9 +132,9 @@ namespace PaintClone.Tools
 
             // Hand the shape to MainWindow as a *pending* shape rather than rasterizing it here.
             // It stays unrasterized - re-rendered from these original start/end parameters on
-            // every move/resize - until the selection is committed, so repeatedly adjusting it
-            // never resamples a previous render and never degrades quality. MainWindow switches
-            // to the Select tool so it's immediately draggable.
+            // every move/resize - until it's finally committed, so repeatedly adjusting it never
+            // resamples a previous render and never degrades quality. The tool itself stays
+            // current (see OnMouseDown above) rather than switching to Select.
             if (UsesPendingShape && raw.Width > 1 && raw.Height > 1 && ctx.BeginPendingShape != null)
             {
                 ctx.BeginPendingShape(new PendingShape
@@ -130,7 +168,7 @@ namespace PaintClone.Tools
 
         public virtual void Cancel(ToolContext ctx)
         {
-            _active = false;
+            _mode = Mode.Idle;
             _lastPreviewEnd = null;
             ctx.Canvas.ClearPreview();
         }

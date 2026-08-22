@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using PaintClone.Services;
 
 namespace PaintClone.Models
 {
@@ -87,11 +88,21 @@ namespace PaintClone.Models
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
-        /// <summary>Resizes every layer identically, keeping them all the same dimensions.</summary>
+        /// <summary>Resizes every layer identically, keeping them all the same dimensions. A text
+        /// layer is re-rendered fresh from its own TextLayerData instead of having its old pixels
+        /// copied/cropped like a raster layer's - re-deriving from the source text is strictly
+        /// better than resampling a bitmap (stays crisp, and a canvas resize is always anchored
+        /// top-left in this app, so the text's own X/Y position is still valid unchanged).</summary>
         public void Resize(int newWidth, int newHeight, Color background, bool anchorTopLeft = true)
         {
             foreach (var layer in Layers)
             {
+                if (layer.Text != null)
+                {
+                    layer.Surface = new RasterSurface(newWidth, newHeight, Colors.Transparent);
+                    TextLayerRenderer.Render(layer.Surface, layer.Text);
+                    continue;
+                }
                 var fresh = new RasterSurface(newWidth, newHeight, background);
                 var copyW = Math.Min(newWidth, layer.Surface.Width);
                 var copyH = Math.Min(newHeight, layer.Surface.Height);
@@ -138,6 +149,48 @@ namespace PaintClone.Models
             LayersChanged?.Invoke(this, EventArgs.Empty);
             MarkDirty();
             return layer;
+        }
+
+        /// <summary>Adds a new text layer rendered from the given (already-populated) TextLayerData
+        /// and makes it active - the text-layer counterpart to AddLayer. The caller owns pushing
+        /// undo state first, same convention as every other structural layer operation here.</summary>
+        public PaintLayer AddTextLayer(TextLayerData text, string name)
+        {
+            var layer = new PaintLayer
+            {
+                Surface = new RasterSurface(Width, Height, Colors.Transparent),
+                Name = name,
+                Text = text
+            };
+            TextLayerRenderer.Render(layer.Surface, text);
+            Layers.Add(layer);
+            ActiveLayerIndex = Layers.Count - 1;
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+            MarkDirty();
+            return layer;
+        }
+
+        /// <summary>Re-renders a text layer already in the document after its TextLayerData has
+        /// been edited in place (content, font, position, ...) - the layer stays exactly where it
+        /// was in the stack and keeps its identity, unlike AddTextLayer.</summary>
+        public void RefreshTextLayer(PaintLayer layer)
+        {
+            if (layer.Text == null) return;
+            TextLayerRenderer.Render(layer.Surface, layer.Text);
+            MarkDirty();
+        }
+
+        /// <summary>Converts a text layer into an ordinary raster layer in place, keeping whatever
+        /// it currently renders as (Surface is already an up-to-date render - there's nothing to
+        /// redraw) but discarding the live TextLayerData, so it's no longer double-click-to-re-edit
+        /// and can be painted on directly like any other layer. The Photoshop-style escape hatch for
+        /// "I'm done adjusting this text and just want to draw over/under it now."</summary>
+        public void RasterizeLayer(int index)
+        {
+            if (index < 0 || index >= Layers.Count || Layers[index].Text == null) return;
+            Layers[index].Text = null;
+            LayersChanged?.Invoke(this, EventArgs.Empty);
+            MarkDirty();
         }
 
         public void DeleteLayer(int index)

@@ -1482,6 +1482,328 @@ offer the same built-in size list New Picture does instead of only free-typed Wi
   it - same UX contract as New Picture, reimplemented for a `ComboBox` instead of a `ListBox` since
   Attributes is a much smaller dialog.
 
+### Forty-eighth round: shape tools handle their own selection now, instead of detouring through Select
+
+Request: after drawing a shape, keep it selectable (move/resize) *without* leaving the tool that
+drew it - "the tool also has select property" - on the belief that the forced detour through
+Select was itself the source of several bugs. It was.
+
+**The old design.** Every drag-shape tool (Line, Rectangle, Ellipse, Rounded Rectangle, Arrow,
+Star) left its drawn shape unrasterized as a "pending shape" - a floating selection, movable and
+resizable before it's committed - and `MainWindow.BeginPendingShape` unconditionally switched the
+active tool to Select the instant that happened, remembering the origin tool (`PendingShape.
+OriginToolKey`) so it could switch back once the shape was finally committed. That switch-back
+only fired on specific triggers (clicking away with the Select tool, in practice), which is a
+narrower set of moments than "the shape is done" - and the tool being genuinely different for the
+whole adjustment phase is what caused the bugs:
+
+- **Escape while a shape was pending could silently commit it with no undo entry.** The Escape
+  shortcut calls `_tools[_currentToolKey].Cancel(ctx)` and *then* discards the pending shape -
+  under the old design `_currentToolKey` was "Select" at that point, and `SelectRectTool.Cancel`
+  itself calls `ctx.Selection.Deselect(...)`, which commits any floating content before the
+  shortcut's own "just discard it, nothing to undo" logic ever ran. The shape's pixels landed in
+  the document permanently, with no way to Ctrl+Z it back out, contradicting the shortcut's own
+  comment about there being "nothing to undo."
+- **A second click meant to start the next shape could be swallowed by the wrong tool.** Clicking
+  outside a still-pending shape (to place the next one) was, at that instant, a click on the
+  *Select* tool - which finalizes the pending shape as a side effect of switching back to, say,
+  Rectangle, but that switch-back happens *during* the click that was supposed to start drawing,
+  not before it - a real source of the tool only "properly" reappearing on the click *after* the
+  one that visibly seemed to draw nothing.
+- **Every shape meant re-picking the tool's own options.** While a shape sat pending, the active
+  tool was Select, whose options bar (Opaque/Transparent) has nothing to do with adjusting a shape
+  - the shape's own Size/Fill/Edges controls were unreachable until it was dropped.
+
+**The fix.** `DragShapeToolBase` (the shared base for all six of those tools) now has a `Mode` of
+its own: `Idle`, `Drawing` (the existing drag-a-new-shape behavior), or `Moving`. `OnMouseDown`
+checks first whether a shape it already drew is still pending and the click landed inside it -
+if so, that's a move, handled with the same "drag anchor + original bounds" approach
+`SelectRectTool`/`FreeFormSelectTool`/`MagicWandSelectTool` already use for their own selections
+(and reusing their `SelectRectTool.RenderFloating` to redraw it, rather than a second copy of that
+logic). A click *outside* the pending shape finalizes it in place first (`ctx.FinalizePendingShape`,
+a new, narrower counterpart to the existing `FinalizeFloatingSelection` that commits without also
+switching tools, since here there's nothing to switch away from) and then starts the next shape
+with that same click - so several shapes in a row is one continuous drag-drag-drag rather than
+drag-reselect-drag-reselect. `MainWindow.BeginPendingShape` no longer calls `SelectTool("Select")`
+at all; the tool that drew the shape simply stays current. The two places that gated
+selection-handle visibility and the move-cursor hint on `_currentToolKey is "Select" or
+"FreeFormSelect" or "MagicWand"` now go through a new `CurrentToolHandlesSelection()` check that
+also recognizes any `DragShapeToolBase` tool, so the resize handles show up correctly while still
+on Rectangle, Ellipse, and so on. `PendingShape.OriginToolKey` and the restore-on-commit logic in
+`FinalizeFloatingSelection` stay exactly as they were, for the one case they're still needed:
+explicitly switching to a *different* tool while a shape is pending still finalizes it and, unlike
+before, has nothing further to restore since the drawing tool was never left in the first place -
+except when the user switches *back* to a shape tool's own next use, which is unaffected.
+
+Deliberately scoped to the six `DragShapeToolBase` tools, not Polygon or Curve - both of those
+already rasterize straight into the document on their own multi-click gestures and never produce a
+pending/floating shape at all, so the bug this fixes doesn't apply to them.
+
+### Forty-ninth round: confirm before Attributes destroys anything, and text becomes a real object
+
+Three requests. The first is a small, self-contained fix; the other two are the biggest single
+addition this project has had - a genuine architecture change, not a bug fix, so it's written up in
+more detail than usual.
+
+**Attributes confirmation.** `AttributesDialog`'s OK button now confirms before anything
+destructive: shrinking the canvas (which crops away whatever falls outside the new size) or
+clicking Clear (which wipes the picture to 1x1). Growing the canvas or changing only the DPI goes
+through unprompted, since neither loses a single pixel. Fixing this surfaced a real pre-existing
+bug along the way: clicking Clear, then changing your mind and typing a real width/height, never
+actually cancelled `ClearRequested` - OK would silently wipe the picture to 1x1 regardless of
+whatever you'd just typed, because MainWindow only ever looks at `ClearRequested`, not the
+Width/Height boxes. Editing either box by hand now resets it.
+
+**Text as a live object, not rasterized pixels.** Every shape tool, and now text too, used to
+funnel into the same document: draw, and it's baked into the active layer's pixels the moment you
+click away. Text now becomes its own layer - `PaintLayer.Text` (a new `TextLayerData`: content,
+font, size, bold/italic/underline, color, position) - that stays re-editable indefinitely, the way
+a Photoshop type layer does, rather than a one-shot commit.
+
+- `Services/TextLayerRenderer.Render` is the one place `TextLayerData` becomes pixels - called on
+  every edit, move, resize, and document resize, writing into that layer's own (otherwise ordinary)
+  `RasterSurface`. This is what makes the rest of the app - the canvas display, flattening for
+  Save/Print/Copy, Merge Down - work completely unmodified: a text layer's Surface is always a
+  faithful, up-to-date render, so anything that already just reads Surface/Bitmap keeps working
+  without knowing text layers exist at all.
+- Clicking with the Text tool inside a text layer that's already active re-opens it for editing
+  (`TextTool.OnMouseDown` checks `TextLayerData.Bounds.Contains`) instead of starting a new box on
+  top of it, pre-filled with its current content/formatting. Committing an edit updates that same
+  layer in place; committing a *new* box creates one via the new `PaintDocument.AddTextLayer`.
+  Clearing all the text on an existing layer deletes it outright, rather than leaving a pointless
+  invisible entry in the Layers panel.
+- **`HistoryManager` needed to learn about this or undo would quietly break re-editability.** Its
+  whole-document snapshots only ever captured pixels, width/height, name, and visibility -
+  `RestoreLayers` rebuilds plain `PaintLayer` objects with no idea `TextLayerData` exists. Without
+  a fix, the pixels would still look right after any undo/redo, but every text layer in the
+  document would silently lose its `Text` (turned into an ordinary, no-longer-re-editable raster
+  layer) the instant *any* edit was undone, anywhere. `LayerSnap` now carries a deep-copied
+  `TextLayerData` alongside the pixels, and restoring a snapshot clones it back in - confirmed by
+  the round-trip test described below, which asserts exactly this
+  (`PASS: redo restores Text metadata (not null) - the HistoryManager fix`).
+- **Painting on a text layer needed a guard, or the paint would vanish later.** Every drawing tool
+  writes into `Document.Surface` - the *active* layer's surface - directly. If that active layer
+  happens to be a text layer, painting on it directly would look fine right up until the next time
+  `TextLayerRenderer.Render` regenerates it (the next re-edit, move, or document resize), which
+  starts from a clean transparent surface and redraws only from `TextLayerData` - silently erasing
+  whatever was painted, since painted pixels were never part of what gets re-rendered. Added
+  `RasterizeActiveLayerIfText`, called right before any tool that isn't one of the handful that
+  never touch layer pixels (Select/FreeFormSelect/MagicWand/Text/Magnifier/Pick) gets its
+  `OnMouseDown`, plus the same guard before Flip/Rotate/Invert/Clear Image - the other places that
+  mutate `Document.Surface` directly, outside the normal tool-dispatch path. It does exactly what
+  the Layers panel's own new Rasterize button does (clears `TextLayerData`, keeping the current
+  render as permanent pixels), just triggered automatically instead of requiring the user to notice
+  and do it themselves first.
+- **Layers panel**: text layers show a `[T]` prefix, and a new Rasterize button (enabled only for
+  the active layer when it's a text layer) converts one to ordinary pixels in place - the deliberate
+  escape hatch for "I'm done adjusting this and just want to draw over it now," alongside Merge Down
+  (which already worked correctly for a text layer with no changes needed - it blits whatever the
+  layer currently renders as into the one below, same as any raster layer, and simply discards the
+  `PaintLayer` object, `TextLayerData` included).
+
+**A new project file format (`.splash`).** Every existing Save/Save As format (BMP/PNG/JPEG/GIF/
+TIFF/...) flattens the document to one bitmap - the right behavior for "export a picture to share,"
+but it rasterizes text permanently, which defeats the entire point of the above. `.splash` is a
+plain zip archive (`Services/SplashProjectFile`, using `System.IO.Compression` and
+`System.Text.Json` - both already in the base class library, no new dependency added): one PNG per
+raster layer, plus a `document.json` describing width/height/DPI/active layer and, for a text
+layer, its `TextLayerData` directly instead of a PNG - the one format that round-trips a document
+*exactly* as it was being worked on, editable text included. Added as File > Open/Save/Save As's
+final filter entry (append, not prepend - the existing BMP-variant filter indices are meaningful
+numbers consumed elsewhere, e.g. `PaintDocument.FromBitmap`'s extension mapping, and inserting
+`.splash` at the front would have silently shifted every one of them). `MainWindow.DoSave`/
+`DoSaveAs`/`Open_Click` all branch on `IsProjectFile` (an extension check) to call
+`SplashProjectFile.Save`/`Load` instead of the flatten-and-encode path. Saves write to a `.tmp`
+file and swap it in only on success, so an interrupted write (disk full, crash) can't leave a
+truncated, unopenable project sitting at a path that used to hold a good save.
+
+**Verification.** Given the size of this change, build success alone wasn't enough confidence -
+wrote a throwaway console harness (project-referencing `ShellProject.csproj`, run via `dotnet run`,
+deleted afterward - never committed) that actually exercises the new code: builds a document with
+a raster layer and a text layer, checks the text layer's Surface actually rendered something,
+pushes an undo state, adds the text layer, undoes (layer count back to 1), redoes (layer count back
+to 2 *with* `Text` still populated - the HistoryManager fix), then saves to a real temp `.splash`
+file and loads it back, checking the raster layer's pixels, the text layer's full `TextLayerData`
+(content/font/bold/underline/color/position), and that the reloaded text layer's Surface was
+correctly re-rendered from that data. This is what actually caught a real bug before it shipped:
+`BitmapEncoder.Save` throws `NotSupportedException` when written straight to a
+`ZipArchiveEntry`'s own stream, because that stream doesn't support seeking and `BitmapEncoder.Save`
+requires one internally - fixed by encoding to a `MemoryStream` first and copying the resulting
+bytes into the zip entry. All 23 checks pass after that fix.
+
+### Fiftieth round: point text vs. paragraph text, and clicking into text lands the caret
+
+Follow-up to the previous round's text layers: "make the text editable just like in Photoshop."
+The object model (text stays live, re-editable, saved with the project) was already there; what was
+missing were two of Photoshop's most recognizable Type tool behaviors.
+
+- **Point text vs. paragraph text.** Photoshop's Type tool draws a real distinction between a plain
+  click (free-standing "point text" - no fixed width, never wraps, grows in both directions as you
+  type) and a click-drag (a fixed-width "paragraph text" box that wraps). This app's Text tool
+  always forced a click into a minimum 120x24 wrapping box, whether or not a drag actually happened.
+  `TextTool` now measures the drag distance and, below a small threshold, treats it as a click:
+  `TextLayerData` gained an `AutoWidth` flag, `ITool.BeginTextEditing` gained a matching parameter,
+  and `TextLayerRenderer` only constrains `FormattedText.MaxTextWidth` when `AutoWidth` is false
+  (left at its default - unconstrained - a point text layer wraps at explicit newlines only, same
+  as its live `TextWrapping.NoWrap` `TextBox` does). `AutoGrowTextBox` (which already grew a box's
+  *height* to fit while typing) now also grows *width* when editing point text, using the same
+  "measure, only ever grow" approach.
+- **Clicking into existing text lands the caret where you clicked**, instead of selecting
+  everything. `TextTool.OnMouseDown` now passes the click's document-space point through
+  `ITool.BeginTextEditOnActiveLayer`, and `MainWindow` converts that into the live `TextBox`'s local
+  coordinates and calls `TextBox.GetCharacterIndexFromPoint` to place `CaretIndex` there -
+  deferred one dispatcher tick (`DispatcherPriority.Loaded`), since that method needs the box to
+  have actually been through a layout pass before it can find anything meaningful, which hasn't
+  happened yet synchronously right after adding it to the visual tree.
+- `AutoWidth` is threaded all the way through - `TextLayerData.Clone` (so undo/redo preserves it,
+  same reasoning as the rest of that fix two rounds ago) and `SplashProjectFile`'s `document.json`
+  (so a reopened point-text layer stays point text, not silently reinterpreted as a fixed-width
+  paragraph box).
+
+Re-verified with an updated round-trip test (same throwaway-harness approach as the previous round):
+builds a point-text layer and a paragraph-text layer, checks both actually rendered, round-trips a
+`.splash` save/load, and confirms `AutoWidth` survived correctly on each (`true` and `false`
+respectively) along with re-rendering correctly on load. 10/10 pass.
+
+### Fifty-first round: clicking back into text you'd already written did nothing
+
+Reported: "not able to edit already written text." `TextTool.OnMouseDown`'s click-to-edit check
+only ever looked at the *active* layer - `ctx.Document.ActiveLayer.Text`. That's fine the moment a
+text layer is first created (`AddTextLayer` makes it active), but the instant *any* other layer
+becomes active - most commonly, simply writing a second piece of text, since a new text layer
+becomes active immediately, exactly like the first one did - clicking back into the first one
+stopped doing anything at all, since it was checking a layer that was no longer the one the user
+was clicking on.
+
+Fixed by searching every layer, not just the active one, front-to-back (last in `Layers` = frontmost
+- the app's own convention) so an overlapping topmost text layer wins if more than one's bounds
+contain the click, and setting `ActiveLayerIndex` to whichever one matched before handing off to
+`BeginTextEditOnActiveLayer` - so clicking on *any* text you'd written re-opens it, regardless of
+which layer happened to be selected beforehand, matching what "click on text to edit it" actually
+implies. `MainWindow.BeginTextEditOnActiveLayer` now also refreshes the Layers panel afterward,
+since this can silently change which layer is active - without that, the panel's highlighted row
+would keep pointing at whatever was active a moment ago instead of the text layer now actually
+being edited.
+
+### Fifty-second round: the previous round's fix still wasn't enough - clicks weren't reaching the canvas at all
+
+Reported again: still not entering edit mode on click. The previous round's fix (search every
+layer, not just the active one) was necessary but not sufficient - it never got a chance to run,
+because the click that was supposed to trigger it never made it past `TextOverlayLayer` in the
+first place.
+
+`TextOverlayLayer` - the transparent `Canvas` that hosts the live editing `TextBox` plus its move/
+resize handles - is exactly the same overlay the *very first* round of fixes in this README dealt
+with: "hit-test-visible by default, so it sat on top of the drawing canvas and silently swallowed
+every mouse click," fixed by only flipping `IsHitTestVisible` on while a text box is actually open.
+That fix was real and correct, but it had a second, narrower half nobody had needed until now:
+`TextOverlayLayer` also had `Background="Transparent"` set - and in WPF, a `Panel` with a *non-null*
+Background (even literally `Transparent`) is hit-testable across its *entire* area, not just where
+its children are. So the instant one text box was open (`IsHitTestVisible="True"` for the duration
+of that edit), *any* click anywhere on the canvas - including on a completely different piece of
+existing text, or empty space - landed on this now-hit-testable, empty stretch of the overlay
+itself and went nowhere: not into the TextBox (wasn't clicked), not through to
+`PaintCanvas`/`Canvas_MouseDown` underneath (blocked by the overlay), and not even committing the
+open box, since nothing non-focusable was clicked to steal keyboard focus away from it either. The
+click was simply absorbed, with no visible effect at all - which is exactly "click on the text,
+nothing happens."
+
+Fixed by dropping the overlay's `Background` entirely (leaving it `null`, the `Canvas` default).
+A `Panel` with no `Background` is *not* hit-testable across its own otherwise-empty area, so a
+click landing outside the live `TextBox`/handles - but still inside `TextOverlayLayer`'s bounds -
+now falls straight through to `PaintCanvas` beneath, exactly as if the overlay weren't there. The
+`TextBox` and both handles stay fully clickable regardless - each already has its own non-null
+`Background`, entirely independent of the parent `Canvas`'s. `PaintCanvas.RaiseDown` already calls
+`Focus()` on itself the moment a click reaches it, which synchronously fires `LostKeyboardFocus` on
+whatever was previously focused (the open `TextBox`) *before* the click is dispatched to the
+current tool - so one click now correctly does both halves of "click elsewhere": commits whatever
+text was open, then immediately hands that same click to the Text tool, which (per the previous
+round's fix) searches every layer and opens whichever text - if any - is actually under it.
+
+### Fifty-third round: layer selection was working, the edit box itself wasn't reliable
+
+Clarified report: the *layer* was now being correctly selected on click (confirming the two
+previous fixes were both real and both needed), but no editable box was reliably appearing - not
+what was actually being asked for, which was simply "clicking existing text behaves like clicking
+to create new text: a box appears, and it's editable."
+
+The most likely culprit was the previous round's own addition: landing the caret at the exact
+clicked point via `TextBox.GetCharacterIndexFromPoint`, deferred a dispatcher tick
+(`DispatcherPriority.Loaded`) for layout to catch up first. Correct in principle, but it added a
+second moving part - coordinate math plus asynchronous timing - to a code path that didn't need
+either to satisfy what was actually being asked for, and was the one meaningful difference between
+the (already working) "create new text" path and the (not working) "re-edit existing text" path.
+
+Simplified rather than continuing to chase it: `BeginTextEditOnActiveLayer` no longer takes a click
+point or defers anything. `StartTextBoxUI` now sets `CaretIndex` to the end of whatever content it
+was given, synchronously, right after focusing the box - position 0 for a fresh empty box (already
+correct, trivially), ready to keep typing at the end for a re-edit. Also moved the Layers panel
+refresh (which reflects TextTool possibly having just switched the active layer) to *after* the box
+is already live and focused, and wrapped it in a best-effort try/catch - cosmetic panel highlighting
+must never be able to prevent the actual editing box from working, regardless of the reason.
+
+### Fifty-fourth round: the actual cause - the edit box was being created while the canvas held mouse capture
+
+Three rounds of hypotheses had each fixed something real (the active-layer-only hit test, the
+click-swallowing overlay background, the fragile deferred caret positioning) without fixing the
+reported symptom. The mistake was reasoning forward from "what could break editing" instead of
+comparing the path that demonstrably *works* against the one that doesn't.
+
+Creating brand-new text has always worked. Re-editing existing text never did. The two paths are
+almost identical - both end up in the same `StartTextBoxUI` - and differ in exactly one way:
+
+- **New text** opens its box from `TextTool.OnMouseUp`. `PaintCanvas.RaiseUp` calls
+  `ReleaseMouseCapture()` *before* dispatching that event, so the canvas holds no capture.
+- **Re-editing** opened its box from `TextTool.OnMouseDown`. `PaintCanvas.RaiseDown` calls
+  `Focus()` and `CaptureMouse()` on the canvas immediately *before* dispatching - so the canvas
+  held both keyboard focus and mouse capture at the instant the `TextBox` was created and focused.
+
+With the canvas holding mouse capture, the freshly created box can't reliably take or keep keyboard
+focus, and mouse input keeps routing to the capturing canvas rather than the box - so a box that
+was genuinely created, positioned, and populated still couldn't be typed into. That also explains
+why the symptom survived every previous fix: each one was upstream of, or unrelated to, this.
+
+The fix is to stop having two different paths at all. `TextTool.OnMouseDown` now only *flags* that
+the press landed on existing text (`_reEditPending`, after setting the active layer as before), and
+`OnMouseUp` opens the editor - the same moment in the gesture, and the same post-capture-release
+state, that creating new text has always used.
+
+Two guards were added alongside it so a failure here can't be silent again:
+
+- **Commit-on-focus-loss now requires the box to have actually held focus first.** `LostKeyboardFocus`
+  was wired directly to `CommitActiveTextBox`, so a box that never managed to take focus - or any
+  stray focus event during setup - would tear the editor straight back down before it could be typed
+  into, which is indistinguishable from "clicking the text does nothing." A `GotKeyboardFocus`
+  handler now gates it.
+- **Focus is retried once after layout.** WPF refuses keyboard focus to an element that isn't
+  visible yet, and an element added to the tree inside an event handler hasn't been measured or
+  arranged at that point, so the initial `Keyboard.Focus` call can silently do nothing. A single
+  retry at `DispatcherPriority.Input`, guarded by `IsKeyboardFocusWithin`, is a no-op when the first
+  attempt already worked and closes the gap when it didn't.
+
+### Fifty-fifth round: editing a text layer showed the text twice
+
+With editing finally working, the next problem became visible: re-opening a text layer showed two
+copies of the text, slightly offset - and editing or deleting only affected one of them.
+
+Both copies were real. A text layer's `Surface` holds its *rendered* pixels (see
+`Services/TextLayerRenderer`), and those stayed on screen while the live editing `TextBox` overlay
+showed the same text on top of them. Typing only changed the live copy; the rendered one sat
+underneath unchanged until commit, which is exactly the reported "delete one and the other stays."
+
+Fixed by hiding that one layer on screen for the duration of the edit, via a new
+`PaintCanvas.SuppressedLayerIndex` - set when re-editing begins, cleared on every exit path out of
+`CommitActiveTextBox` (before its own branching, so a stale index can't outlive the layer it
+referred to once indices shift on the delete path), and reset in `SetDocument` since an index into
+a previous document means nothing in a new one.
+
+Deliberately display-only. The two obvious alternatives - clearing the layer's pixels, or toggling
+its `Visible` flag - both look equivalent but are wrong here: `HistoryManager`'s snapshots capture
+pixels *and* `Visible` *and* `TextLayerData`, so either would leak a transient editing state into
+real undo history (undoing to a point mid-edit would restore a blanked or hidden layer, and pushing
+undo during commit would capture the blanked pixels alongside the pre-edit text). Suppressing at
+the canvas's own per-layer `Image` touches nothing the document model or undo knows about.
+
 ## How to build
 
 Requires Windows + .NET 10 SDK (WPF is Windows-only; this will not build on Linux/macOS).
