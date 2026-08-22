@@ -2178,6 +2178,228 @@ One honest limitation: at 22px the many-sided polygons (roughly 14 sides and up)
 almost indistinguishable from each other and from a circle. Their tooltips name them exactly, but
 the glyphs alone won't tell them apart - that's inherent to the shapes, not a rendering fault.
 
+### Sixty-fourth round: UML and ER arrowheads, and a head at each end
+
+**Each end of an arrow is now picked separately.** This is the change that makes the rest possible.
+UML notation is routinely asymmetric - aggregation puts a hollow diamond at the *source* end and
+either nothing or a plain open arrow at the target, and an ER connector normally carries a different
+multiplicity marker at each end. The old model was a single combined `ArrowStyle` with paired
+"...Both" variants, which cannot express "diamond here, arrow there" at all; enumerating the
+combinations instead would need 289 entries. So `ArrowStyle` is gone, replaced by an `ArrowHead`
+chosen independently for `Start:` and `End:`.
+
+**Seventeen heads**, covering the standard technical notations:
+
+| Head | Used for |
+| --- | --- |
+| Open arrow / Half arrow | UML association and navigability; half is an asynchronous message |
+| Solid arrow | UML synchronous message |
+| Hollow triangle | UML generalization; on a dashed line, realization |
+| Hollow / Solid diamond | UML aggregation vs composition |
+| Hollow circle, Socket | UML provided interface ("lollipop") and required interface (ball-and-socket) |
+| Solid circle | terminator or junction |
+| Bar, Double bar | ER "one", "one and only one" |
+| Crow's foot (+ bar, + circle) | ER "many", "one or many", "zero or many" |
+| Bar + circle | ER "zero or one" |
+| Cross | a blocked or cut connector |
+
+**A `Preset:` dropdown names the combinations that mean something** - Generalization, Realization,
+Dependency, Aggregation, Composition, the two directed variants, provided/required interface, the
+three sequence-diagram messages, and seven ER cardinalities, 21 in all. This exists because a
+relationship is not just a head: *realization is a hollow triangle plus a dashed shaft*, and
+picking the head alone gets you generalization instead - a different statement about the code.
+Selecting a preset sets both ends and the line style together; all three stay individually
+adjustable afterwards, and the preset box drops to "Custom" when you change one into a combination
+with no standard name.
+
+The head pickers name the *shape* ("Hollow diamond") with the notation on a hover tip ("UML
+aggregation - a 'has a' relationship"), rather than the other way round: spelling the meaning into
+each row pushed every name past the width of the combo, and the shape is what you match against
+the picture beside it. The preset list is where you go if you know the relationship but not the
+notation.
+
+**Enclosing heads now clip the shaft.** A hollow triangle with the line drawn straight through it
+reads as a filled one with a stripe. Each head reports how far short of its own point the shaft
+should stop - a head that sits *on* the line, like an open barb or a crow's foot, reports zero.
+
+Four defects the harness caught, all real, none visible from reading the code:
+
+- **The hollow circle came out lopsided.** `DrawEllipse` centres on `bounds.X + Width/2.0`, so an
+  odd-sized box put the centre half a pixel off the intended pixel and every sample of the
+  parametric outline rounded from a `.5` offset. 50 mismatched pixels. Fixed by passing an
+  even-sized box - and that skew was propagating into both composite ER markers built on it.
+- **The diamond and the socket were each about a pixel out of true.** Both were drawn as a
+  continuous path around the shape, so mirrored edges got traversed in *opposite* directions, and
+  Bresenham breaks ties toward its start point. They're now drawn as mirrored pairs, each stroked
+  outwards from the axis. (Same root cause as the lopsided arrowhead in the sixty-second round,
+  reached by a different route - there it was `(int)` truncating mirrored offsets apart.)
+- **The shaft stopped at the circle's centre, not its edge**, because the inset was a radius where
+  it needed a diameter - the circle sits *inside* the end of the line rather than centred on it.
+- **The ER circle merged with the crow's foot in front of it** at a full dot's radius, reading as
+  one blob instead of two symbols. Given its own smaller radius and a deliberate gap.
+
+**Also fixed, and pre-existing rather than new here: every option preview kept the old theme's
+colour after a theme switch.** The previews are rasterized once and frozen, and no `DynamicResource`
+can reach inside a finished bitmap, so switching to Light left them pale grey on pale grey - all
+but invisible - across the shape, brush and line-style dropdowns too, not only the new arrow ones.
+`SetTheme` now rebuilds the options bar.
+
+232/232 in the harness: every head draws, is mirror-symmetric about its own shaft (except the half
+arrow, asserted to be one-sided), previews distinctly from all sixteen others, and renders at the
+start as the exact 180-degree rotation of itself at the end; hollow variants are lighter than their
+solid twins; closed heads clip the shaft and open ones don't; dashes stay on the shaft and never
+break a head's edge; all 21 presets round-trip and preview differently. Contact sheets of all 17
+heads and all 21 presets were rendered and read by eye as well - a passing pixel assertion does not
+prove a crow's foot *looks* like a crow's foot.
+
+One honest limitation: the two *filled* heads differ by about a pixel along their diagonal edges
+between pointing left and pointing right. `FillPolygon` truncates its span ends toward zero, so a
+shape and its 180-degree rotation round oppositely. The silhouette is identical either way (checked:
+0px against the hollow outline) and each head is exactly symmetric about its own shaft, so this is
+invisible in use. Rounding there instead would shift the edge of all 103 catalogue shapes by a
+pixel, which is not a change to make under an arrowhead request.
+
+### Sixty-fifth round: Invert Colors only inverted one layer
+
+Reported as "when I spray paint and invert color it sometimes won't work". It did work - on the
+active layer, which is not what made it look broken.
+
+A new document opens with an empty transparent layer selected above an opaque white Background, so
+that the first stroke lands on its own layer. That means almost everything you paint sits on the
+top layer. Inverting only that layer turned black paint white, over a white background that hadn't
+changed - so the picture appeared to go blank rather than invert, and pressing Ctrl+I again brought
+it back. Whether the command "worked" depended entirely on which layer happened to be selected,
+which is invisible from the canvas. Painting on the Background instead gave the obvious black-white
+flip people expect, hence "sometimes".
+
+**Invert Colors now inverts every layer**, which is what an *Image* menu command should do - it is
+a change to the picture, not to one sheet of it. Verified by reproducing the original complaint
+exactly (spray on the default layer, Ctrl+I) before and after.
+
+Text layers keep their editability through it. A text layer's surface is only a cache regenerated
+from its `TextLayerData`, so inverting those pixels would be discarded by the next re-render - the
+colour it draws with is the real state, and that is what gets inverted. The layer stays live text
+rather than being rasterized behind the user's back to make one menu command work.
+
+Two further defects turned up while tracing this, both left alone for now because they need a
+decision rather than a fix:
+
+- **Flip, Rotate and Stretch/Skew also apply to the active layer only**, and unlike Invert that
+  leaves the document genuinely inconsistent rather than merely surprising. `PaintDocument`'s own
+  summary says layers are "each an independent RasterSurface of the same dimensions", but rotating
+  a 480x360 picture by 90 degrees replaces just the active layer with a 360x480 surface and leaves
+  every other layer landscape. Confirmed in the running app: after the rotate, Attributes reports
+  360x480 with the top layer selected and 480x360 with the Background selected. Fixing these the
+  same way needs a policy for editable text layers first - unlike a colour inversion, a rotation or
+  a skew cannot be pushed into `TextLayerData`, so those layers would have to be rasterized.
+- **The status bar's size readout doesn't refresh when the active layer changes**, so after the
+  rotate above it kept showing the previous layer's dimensions.
+
+### Sixty-sixth round: swapping the foreground colour, the way Photoshop does it
+
+The overlapping foreground/background swatches were already there, but two of the four things that
+make that arrangement useful in Photoshop were missing, and one of the two that existed didn't
+respond to the obvious gesture:
+
+- **Swap**, the bent double arrow in the top-right corner, and **X** for it. `ColorManager` has had
+  a `SwapColors()` method since it was written and *nothing had ever called it* - no button, no
+  menu item, no key. Exchanging two colours meant picking both again by hand.
+- **Reset to black/white**, the small two-square mark in the bottom-left. It sets black on white -
+  what the mark itself depicts - rather than the app's own startup background of transparent, which
+  already has its own swatch directly below.
+- **A single click on a swatch now opens the colour picker.** It used to need a double-click, with
+  a single click doing nothing at all, so the most obvious gesture on the most obvious target in
+  the window was silently inert.
+- Both actions are also in the Colors menu, for discoverability - a corner glyph is only obvious
+  once you already know what it is.
+
+X was free. **D was not**, and is deliberately left alone: it's Tool: Gradient here, and binding
+both to it would leave `Match()` returning whichever of the two happened to enumerate first out of
+a dictionary. Reset-to-black/white therefore ships *unbound* (`Key.None`, which `DisplayString`
+already renders as "(none)" and which no real keypress can match), reachable by its always-clickable
+control, and assignable in the Shortcut Manager by anyone willing to move Gradient off D first.
+
+Verified in the running app: swap by button, by X, and by menu; reset by mark; single-click opening
+the picker seeded with the current colour; both new glyphs legible in dark and light themes. Also
+checked the thing a bare-letter binding actually risks - typing `axbxc` into a text layer still
+produces "axbxc" and leaves the colours alone, because the key handler already bails out when a
+text field has focus.
+
+### Sixty-seventh round: the swap arrow was mirrored, and Attributes grew a Statistics tab
+
+**The swap arrow pointed the wrong way.** Its elbow sat in the top-left with both heads aimed away
+from the swatches. Photoshop corners it in the top-right so each head points *at* the square it
+stands for - left towards the foreground swatch above-left, down towards the background swatch
+below-right. Now it does.
+
+**Attributes is now two tabs**: the existing canvas controls, and a Statistics tab measuring the
+picture itself. Everything is taken from the flattened composite of the *visible* layers - what you
+would get if you exported right now - rather than from the active layer, because these are
+statements about the image and a hidden layer is not part of it.
+
+- **A histogram**, with RGB, Luminosity and single-channel views. Log-scaled: the top bin of a
+  flat-colour picture outweighs the rest by orders of magnitude, and on a linear axis it flattens
+  everything else to nothing.
+- **Most used colors** - the top eight with their share, as chips and bars.
+- **Coverage** - opaque / semi-transparent / empty as one proportional bar. A picture that looks
+  finished but is 60% empty is worth being able to see at a glance.
+- **Image** - dimensions, megapixels, layer counts, exact distinct-colour count, memory, per-channel
+  means, mean/median brightness, range, standard deviation.
+
+Three things worth recording about how it's measured:
+
+- **Semi-transparent pixels are unpremultiplied before being counted.** The buffer is Pbgra32, so
+  the stored channels are already scaled by alpha; measuring them directly would record every
+  partly-transparent pixel as darker than it is and drag the averages down. There's a test for it -
+  half-opaque white must still measure as white, not as grey.
+- **Empty pixels are counted, not averaged.** They have no colour, so folding them in as black
+  would make the mean brightness of a mostly-empty layer meaningless. They're reported separately
+  under Coverage, and the percentages under Most used colors are shares of the *coloured* pixels.
+- **Distinct colours is exact**, counted through a 2^24 bitset - a flat 2 MB regardless of the
+  picture - while the "most used" list groups near-identical shades at 5 bits a channel. Those two
+  answer different questions, and the panel says which is which: on any anti-aliased image the
+  exact top colours are thousands of near-identical neighbours and a list of them says nothing.
+
+The RGB view needed a second attempt. Drawn first as three translucent shapes stacked on top of
+each other, it was wrong in the most common case there is: on a greyscale picture all three channels
+are identical, so whichever was drawn last covered the other two and the whole chart came out blue.
+It now composites the channels additively by hand, one column at a time - grey where all three
+overlap, yellow/magenta/cyan where exactly two do, a pure channel colour where only one reaches -
+which is both what Photoshop shows and what the data actually says. The columns are snapped to
+whole pixels and drawn aliased, because at fractional widths their antialiased edges blended into
+each other and the filled area came out finely striped, as though the data oscillated when it
+doesn't.
+
+59 assertions on the numbers before any of it was wired to the UI - flat colours, a black/white
+split where the standard deviation and median are known in advance, transparency, a completely
+empty picture (no dividing by zero, no NaN, no min-luminance left at its 255 seed), hidden layers
+being excluded from the image but counted in memory, histogram bins summing to the coloured-pixel
+count, the coverage buckets partitioning the canvas exactly, and the luma weights actually being
+weights - pure green must measure brighter than pure red, which must measure brighter than pure
+blue. All five channel views, both new sections and the corrected arrow were then checked in the
+running app.
+
+### Sixty-eighth round: SVGA as the default canvas
+
+New pictures now start at **800 x 600** instead of 480 x 360.
+
+The number was written out in four places - the startup document, the New Picture dialog's fallback
+when there is no current picture, that dialog's XAML, and the built-in preset table - so it now
+lives once, as `CanvasSizePresetStore.DefaultWidth/DefaultHeight`, and the other three read it. The
+XAML pair were dead anyway: the constructor overwrites both boxes with the current picture's size
+the moment the dialog opens, so those literals could only ever have disagreed with the real default
+without anyone noticing.
+
+The preset list would have ended up with two rows showing identical dimensions, since it already
+offered SVGA separately. They're merged into one **Default (SVGA)** entry, and the old default is
+kept as **Classic Paint (480 x 360)** rather than dropped - it's still the size a Paint-shaped
+picture wants.
+
+The default *window* grew with it, 1080 to 1140 wide. The tool strip and the right-hand panels take
+a fixed ~300px between them, so at the old width an 800px picture overflowed the viewport by about
+forty pixels and the app opened already scrolled sideways - a default canvas the default window
+can't show is a poor pairing. Height was already enough for 600px and is unchanged.
+
 ## How to build
 
 Requires Windows + .NET 10 SDK (WPF is Windows-only; this will not build on Linux/macOS).

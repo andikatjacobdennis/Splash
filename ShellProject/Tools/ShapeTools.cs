@@ -323,7 +323,9 @@ namespace PaintClone.Tools
         /// past the plain start/end box by roughly the head's length. Without allowing for that
         /// here, re-rendering the pending shape into a tightly-fitted bitmap clipped the head -
         /// most visibly when the selection was dragged shorter vertically.</summary>
-        protected override int ExtraPad(ToolContext ctx) => (int)Math.Ceiling(HeadLength(ctx, double.MaxValue)) + 2;
+        /// The 2x allows for the composite ER heads, which stack a marker *behind* another one and
+        /// so reach further back along the line than a single head's length.
+        protected override int ExtraPad(ToolContext ctx) => (int)Math.Ceiling(HeadLength(ctx, double.MaxValue) * 2) + 2;
 
         private static double HeadLength(ToolContext ctx, double lineLen)
         {
@@ -337,62 +339,56 @@ namespace PaintClone.Tools
         {
             var c = _button == MouseButton.Right ? ctx.Colors.Background : ctx.Colors.Foreground;
             int thickness = Math.Max(1, ctx.PenSize);
-            surface.DrawLine((int)start.X, (int)start.Y, (int)end.X, (int)end.Y, c, thickness);
 
             double dx = end.X - start.X, dy = end.Y - start.Y;
             double len = Math.Sqrt(dx * dx + dy * dy);
-            if (len < 1 || ctx.ArrowStyle == ArrowStyle.None) return;
+            if (len < 1)
+            {
+                surface.DrawLine((int)start.X, (int)start.Y, (int)end.X, (int)end.Y, c, thickness);
+                return;
+            }
 
-            double angle = Math.Atan2(dy, dx);
-            double headLen = HeadLength(ctx, len);
-
-            DrawHeadsFor(surface, ctx.ArrowStyle, start, end, angle, headLen, thickness, c);
+            DrawArrow(surface, ctx.ArrowHeadStart, ctx.ArrowHeadEnd,
+                      start, end, HeadLength(ctx, len), thickness, c);
         }
 
-        /// <summary>Draws whichever head(s) a style calls for onto an already-drawn shaft. Public to
-        /// this assembly so the tool-options preview renders heads with this exact code rather than
-        /// its own approximation - the previews previously drew a barbed head for every style, so
-        /// diamond, dot and bar all showed the wrong picture in the dropdown.</summary>
-        internal static void DrawHeadsFor(RasterSurface surface, ArrowStyle style, Point start, Point end,
-                                          double angle, double headLen, int thickness, Color c)
+        /// <summary>Draws a complete arrow: the shaft, then whichever head each end calls for.
+        ///
+        /// Shared with the tool-options previews rather than duplicated there, so a dropdown always
+        /// shows the head you will actually get. An earlier version had the preview draw its own
+        /// approximation, which meant the diamond, dot and bar entries all previewed as a barbed
+        /// head - the picture and the result disagreed.</summary>
+        internal static void DrawArrow(RasterSurface surface, ArrowHead startHead, ArrowHead endHead,
+                                       Point start, Point end, double headLen, int thickness, Color c)
         {
-            if (style == ArrowStyle.None) return;
+            double angle = Math.Atan2(end.Y - start.Y, end.X - start.X);
+            double ux = Math.Cos(angle), uy = Math.Sin(angle);
 
-            bool bothEnds = style is ArrowStyle.Both or ArrowStyle.FilledBoth
-                or ArrowStyle.DiamondBoth or ArrowStyle.CircleBoth or ArrowStyle.BarBoth;
+            // Closed heads (triangle, diamond, circle, socket) are hollow shapes the shaft must not
+            // be drawn through, or a hollow triangle reads as a filled one with a stripe. Each end
+            // reports how far back from its point the shaft should stop.
+            double si = ShaftInset(startHead, headLen), ei = ShaftInset(endHead, headLen);
+            var s2 = new Point(start.X + ux * si, start.Y + uy * si);
+            var e2 = new Point(end.X - ux * ei, end.Y - uy * ei);
+
+            // A very short arrow can have the two insets overlap, which would flip the shaft
+            // backwards. Drawing nothing is correct there - the heads alone already meet.
+            double shaftLen = Math.Sqrt((e2.X - s2.X) * (e2.X - s2.X) + (e2.Y - s2.Y) * (e2.Y - s2.Y));
+            if ((e2.X - s2.X) * ux + (e2.Y - s2.Y) * uy > 0 && shaftLen >= 1)
+            {
+                surface.DrawLine((int)Math.Round(s2.X), (int)Math.Round(s2.Y),
+                                 (int)Math.Round(e2.X), (int)Math.Round(e2.Y), c, thickness);
+            }
 
             // The dash pattern belongs to the shaft only - a dashed arrowhead just looks like a
-            // broken one. Suppressed for the duration of the head and restored afterwards.
+            // broken one, and a dotted realization triangle would be unreadable. Suppressed for the
+            // duration of both heads and restored afterwards.
             var savedDash = surface.DashPattern;
             surface.DashPattern = null;
             try
             {
-                // Heads other than the barbed ones are shapes centred on the tip rather than swept
-                // back from it, so they're drawn separately from DrawHead's barb geometry.
-                switch (style)
-                {
-                    case ArrowStyle.Diamond:
-                    case ArrowStyle.DiamondBoth:
-                        DrawDiamondHead(surface, end, angle, headLen, c);
-                        if (bothEnds) DrawDiamondHead(surface, start, angle + Math.PI, headLen, c);
-                        return;
-
-                    case ArrowStyle.Circle:
-                    case ArrowStyle.CircleBoth:
-                        DrawDotHead(surface, end, headLen, c);
-                        if (bothEnds) DrawDotHead(surface, start, headLen, c);
-                        return;
-
-                    case ArrowStyle.Bar:
-                    case ArrowStyle.BarBoth:
-                        DrawBarHead(surface, end, angle, headLen, thickness, c);
-                        if (bothEnds) DrawBarHead(surface, start, angle + Math.PI, headLen, thickness, c);
-                        return;
-                }
-
-                bool filled = style is ArrowStyle.Filled or ArrowStyle.FilledBoth;
-                DrawHead(surface, end, angle, headLen, thickness, c, filled);
-                if (bothEnds) DrawHead(surface, start, angle + Math.PI, headLen, thickness, c, filled);
+                DrawHead(surface, endHead, end, angle, headLen, thickness, c);
+                DrawHead(surface, startHead, start, angle + Math.PI, headLen, thickness, c);
             }
             finally
             {
@@ -400,68 +396,234 @@ namespace PaintClone.Tools
             }
         }
 
-        /// <summary>Solid diamond centred just behind the tip, pointing along dir.</summary>
-        private static void DrawDiamondHead(RasterSurface surface, Point tip, double dir, double headLen, Color c)
+        /// <summary>How far short of its own point the shaft should stop for a given head. Non-zero
+        /// only for heads that enclose an area: an open barb or a crow's foot sits *on* the line and
+        /// wants it to run right up to the point.</summary>
+        private static double ShaftInset(ArrowHead head, double headLen) => head switch
         {
-            double half = headLen / 2;
-            var back = new Point(tip.X - Math.Cos(dir) * headLen, tip.Y - Math.Sin(dir) * headLen);
-            var mid = new Point((tip.X + back.X) / 2, (tip.Y + back.Y) / 2);
-            double px = Math.Cos(dir + Math.PI / 2), py = Math.Sin(dir + Math.PI / 2);
-            PolygonTool.FillPolygon(surface, new List<Point>
+            // cos(spread) is the triangle's height along the axis, so the shaft meets its base.
+            ArrowHead.SolidTriangle or ArrowHead.HollowTriangle => headLen * Math.Cos(BarbSpread),
+            ArrowHead.SolidDiamond or ArrowHead.HollowDiamond => headLen,
+            // The circle sits *inside* the end of the line rather than centred on it, so the shaft
+            // has to stop at its near edge - a whole diameter back, not a radius.
+            ArrowHead.SolidDot or ArrowHead.HollowDot => DotRadius(headLen) * 2,
+            ArrowHead.Socket => SocketRadius(headLen),
+            _ => 0,
+        };
+
+        private const double BarbSpread = Math.PI / 7;
+        private static double DotRadius(double headLen) => Math.Max(2, Math.Round(headLen / 2));
+        private static double SocketRadius(double headLen) => Math.Max(3, Math.Round(headLen * 0.7));
+        /// <summary>Radius of the small ring in a composite ER cardinality marker.</summary>
+        private static double MarkRadius(double headLen) => Math.Max(2, Math.Round(headLen * 0.32));
+        /// <summary>Clear space between the two symbols of a composite ER cardinality marker.</summary>
+        private static double MarkGap(double headLen) => Math.Max(2, Math.Round(headLen * 0.35));
+
+        /// <summary>Draws one head at <paramref name="tip"/>, pointing along <paramref name="dir"/>
+        /// (which is the direction the line leaves the drawing by at that end, so the caller passes
+        /// angle for the finish and angle+PI for the start). Assumes the caller has already
+        /// suppressed any dash pattern.</summary>
+        private static void DrawHead(RasterSurface surface, ArrowHead head, Point tip, double dir,
+                                     double headLen, int thickness, Color c)
+        {
+            if (head == ArrowHead.None) return;
+
+            int t = Math.Max(1, thickness);
+            switch (head)
             {
-                tip,
-                new(mid.X + px * half * 0.6, mid.Y + py * half * 0.6),
-                back,
-                new(mid.X - px * half * 0.6, mid.Y - py * half * 0.6),
-            }, c);
+                case ArrowHead.OpenBarb: Barbs(surface, tip, dir, headLen, t, c, both: true); break;
+                case ArrowHead.HalfBarb: Barbs(surface, tip, dir, headLen, t, c, both: false); break;
+
+                case ArrowHead.SolidTriangle: Triangle(surface, tip, dir, headLen, t, c, filled: true); break;
+                case ArrowHead.HollowTriangle: Triangle(surface, tip, dir, headLen, t, c, filled: false); break;
+
+                case ArrowHead.SolidDiamond: Diamond(surface, tip, dir, headLen, t, c, filled: true); break;
+                case ArrowHead.HollowDiamond: Diamond(surface, tip, dir, headLen, t, c, filled: false); break;
+
+                case ArrowHead.SolidDot: Dot(surface, tip, dir, headLen, t, c, filled: true); break;
+                case ArrowHead.HollowDot: Dot(surface, tip, dir, headLen, t, c, filled: false); break;
+
+                case ArrowHead.Socket: Socket(surface, tip, dir, headLen, t, c); break;
+
+                case ArrowHead.Bar: Bar(surface, tip, dir, headLen, 0, t, c); break;
+                case ArrowHead.DoubleBar:
+                    Bar(surface, tip, dir, headLen, 0, t, c);
+                    Bar(surface, tip, dir, headLen, headLen * 0.45, t, c);
+                    break;
+
+                case ArrowHead.CrowsFoot: CrowsFoot(surface, tip, dir, headLen, t, c); break;
+                case ArrowHead.CrowsFootBar:
+                    CrowsFoot(surface, tip, dir, headLen, t, c);
+                    Bar(surface, tip, dir, headLen, headLen * 1.35, t, c);
+                    break;
+                // The circle of an ER cardinality marker is a small ring set clearly apart from the
+                // mark in front of it, not a head in its own right - sized and spaced so the two
+                // read as two symbols. At a full dot's radius they merged into one blob.
+                case ArrowHead.CrowsFootDot:
+                    CrowsFoot(surface, tip, dir, headLen, t, c);
+                    Circle(surface, Along(tip, dir, -(headLen + MarkGap(headLen) + MarkRadius(headLen))),
+                           MarkRadius(headLen), t, c, filled: false);
+                    break;
+                case ArrowHead.BarDot:
+                    Bar(surface, tip, dir, headLen, 0, t, c);
+                    Circle(surface, Along(tip, dir, -(MarkGap(headLen) + MarkRadius(headLen))),
+                           MarkRadius(headLen), t, c, filled: false);
+                    break;
+
+                case ArrowHead.Cross: Cross(surface, tip, dir, headLen, t, c); break;
+            }
         }
 
-        /// <summary>Solid dot centred on the tip.</summary>
-        private static void DrawDotHead(RasterSurface surface, Point tip, double headLen, Color c)
-            => surface.StampCircle((int)Math.Round(tip.X), (int)Math.Round(tip.Y),
-                                   Math.Max(2, (int)Math.Round(headLen / 2)), c);
+        /// <summary>A point <paramref name="distance"/> further along dir from p (negative walks
+        /// back down the shaft).</summary>
+        private static Point Along(Point p, double dir, double distance)
+            => new(p.X + Math.Cos(dir) * distance, p.Y + Math.Sin(dir) * distance);
 
-        /// <summary>Flat cross-bar ("tee") across the tip, perpendicular to the line.</summary>
-        private static void DrawBarHead(RasterSurface surface, Point tip, double dir, double headLen,
-                                        int thickness, Color c)
+        private static void Line(RasterSurface s, Point a, Point b, int thickness, Color c)
+            // Rounded, not truncated. A cast truncates *toward zero*, so mirrored offsets either
+            // side of the shaft get pulled in opposite directions by up to a pixel each - which is
+            // exactly what used to make a barbed head look lopsided.
+            => s.DrawLine((int)Math.Round(a.X), (int)Math.Round(a.Y),
+                          (int)Math.Round(b.X), (int)Math.Round(b.Y), c, thickness);
+
+        /// <summary>The two points a barbed head sweeps back to. Shared by the open barbs and the
+        /// closed triangle so the two read as the same head, one drawn shut.</summary>
+        private static (Point B1, Point B2) BarbPoints(Point tip, double dir, double headLen)
+            => (Along(tip, dir + Math.PI + BarbSpread, headLen),
+                Along(tip, dir + Math.PI - BarbSpread, headLen));
+
+        /// <summary>Open barbs. One barb only (the UML asynchronous-message arrow) when both is
+        /// false - deliberately always the same side, so a diagram full of them stays consistent.</summary>
+        private static void Barbs(RasterSurface s, Point tip, double dir, double headLen,
+                                  int thickness, Color c, bool both)
         {
+            var (b1, b2) = BarbPoints(tip, dir, headLen);
+            Line(s, tip, b1, thickness, c);
+            if (both) Line(s, tip, b2, thickness, c);
+        }
+
+        /// <summary>Closed triangle. Filled is the ordinary solid arrow and a UML synchronous
+        /// message; hollow is UML generalization, or realization when the shaft is dashed.</summary>
+        private static void Triangle(RasterSurface s, Point tip, double dir, double headLen,
+                                     int thickness, Color c, bool filled)
+        {
+            var (b1, b2) = BarbPoints(tip, dir, headLen);
+            // Filled heads are outlined as well: at small sizes the scanline fill alone can leave
+            // the sloped edges looking ragged.
+            if (filled) PolygonTool.FillPolygon(s, new List<Point> { tip, b1, b2 }, c);
+            Line(s, tip, b1, thickness, c);
+            Line(s, tip, b2, thickness, c);
+            Line(s, b1, b2, thickness, c);
+        }
+
+        /// <summary>Diamond spanning from the tip back along the line. Filled is UML composition,
+        /// hollow is UML aggregation - the only thing separating "owns" from "has" in a class
+        /// diagram, which is why both are offered rather than just the solid one.</summary>
+        private static void Diamond(RasterSurface s, Point tip, double dir, double headLen,
+                                    int thickness, Color c, bool filled)
+        {
+            var back = Along(tip, dir, -headLen);
+            var mid = new Point((tip.X + back.X) / 2, (tip.Y + back.Y) / 2);
+            double half = headLen * 0.34;
             double px = Math.Cos(dir + Math.PI / 2), py = Math.Sin(dir + Math.PI / 2);
-            double half = headLen * 0.55;
-            surface.DrawLine((int)Math.Round(tip.X - px * half), (int)Math.Round(tip.Y - py * half),
-                             (int)Math.Round(tip.X + px * half), (int)Math.Round(tip.Y + py * half),
-                             c, Math.Max(1, thickness));
+            var left = new Point(mid.X + px * half, mid.Y + py * half);
+            var right = new Point(mid.X - px * half, mid.Y - py * half);
+
+            if (filled) PolygonTool.FillPolygon(s, new List<Point> { tip, left, back, right }, c);
+            // Drawn as two mirrored pairs, each traversed from the axis outwards, rather than as a
+            // cycle round the quad. Bresenham breaks ties toward its start point, so walking the
+            // upper edge tip->left and the lower one right->tip - opposite directions - left the
+            // two sides a pixel apart in places, which is visible as a lopsided diamond.
+            Line(s, tip, left, thickness, c);
+            Line(s, tip, right, thickness, c);
+            Line(s, back, left, thickness, c);
+            Line(s, back, right, thickness, c);
         }
 
-        /// <summary>Draws one arrowhead at tip, pointing along dir.</summary>
-        private static void DrawHead(RasterSurface surface, Point tip, double dir,
-                                     double headLen, int thickness, Color c, bool filled)
+        /// <summary>Circle sitting just inside the end of the line. Hollow is the UML "lollipop"
+        /// provided interface, and the inversion bubble on a logic gate.</summary>
+        private static void Dot(RasterSurface s, Point tip, double dir, double headLen,
+                                int thickness, Color c, bool filled)
         {
-            const double spread = Math.PI / 7;
-            double a1 = dir + Math.PI + spread;
-            double a2 = dir + Math.PI - spread;
-            var b1 = new Point(tip.X + Math.Cos(a1) * headLen, tip.Y + Math.Sin(a1) * headLen);
-            var b2 = new Point(tip.X + Math.Cos(a2) * headLen, tip.Y + Math.Sin(a2) * headLen);
+            double r = DotRadius(headLen);
+            Circle(s, Along(tip, dir, -r), r, thickness, c, filled);
+        }
 
-            // Rounded, not truncated. A cast truncates *toward zero*, so the two barbs - which sit
-            // at mirrored offsets either side of the shaft - were being pulled in opposite
-            // directions by up to a pixel each, which is exactly what made the head look lopsided.
-            int tx = (int)Math.Round(tip.X), ty = (int)Math.Round(tip.Y);
-            int b1x = (int)Math.Round(b1.X), b1y = (int)Math.Round(b1.Y);
-            int b2x = (int)Math.Round(b2.X), b2y = (int)Math.Round(b2.Y);
-
+        private static void Circle(RasterSurface s, Point centre, double radius,
+                                   int thickness, Color c, bool filled)
+        {
+            int cx = (int)Math.Round(centre.X), cy = (int)Math.Round(centre.Y);
+            int r = Math.Max(2, (int)Math.Round(radius));
             if (filled)
             {
-                PolygonTool.FillPolygon(surface, new List<Point> { tip, b1, b2 }, c);
-                // Outline it too, so a solid head still reads cleanly at small sizes where the
-                // scanline fill alone can look ragged.
-                surface.DrawLine(tx, ty, b1x, b1y, c, thickness);
-                surface.DrawLine(tx, ty, b2x, b2y, c, thickness);
-                surface.DrawLine(b1x, b1y, b2x, b2y, c, thickness);
+                s.StampCircle(cx, cy, r, c);
+                return;
             }
-            else
+            // An even-sized box, so DrawEllipse's centre (bounds.X + Width/2.0) lands exactly on the
+            // pixel cx rather than half a pixel past it. With an odd box the parametric outline
+            // rounds every sample from a .5 offset, and the circle comes out visibly lopsided.
+            s.DrawEllipse(new Int32Rect(cx - r, cy - r, r * 2, r * 2), c, thickness,
+                          false, Colors.Transparent);
+        }
+
+        /// <summary>The socket of UML's ball-and-socket notation: a half-circle cupping the point,
+        /// opening away from the line. Stepped round as short segments because the raster surface
+        /// draws whole ellipses, not arcs.</summary>
+        private static void Socket(RasterSurface s, Point tip, double dir, double headLen,
+                                   int thickness, Color c)
+        {
+            double r = SocketRadius(headLen);
+            const int steps = 20;             // even, so a sample lands exactly on the arc's midpoint
+            // Sweeps the half facing back down the line, so the open side faces whatever the
+            // connector is reaching for. The shaft already stops r short, at the back of the cup.
+            var pts = new Point[steps + 1];
+            for (int i = 0; i <= steps; i++)
+                pts[i] = Along(tip, dir + Math.PI / 2 + Math.PI * i / steps, r);
+
+            // Each segment is drawn from the end nearer the arc's midpoint outwards, so the two
+            // halves of the cup are traversed as mirror images and Bresenham's tie-breaking bias
+            // falls the same way on both - drawn as one continuous sweep the cup came out skewed.
+            for (int i = 0; i < steps / 2; i++) Line(s, pts[i + 1], pts[i], thickness, c);
+            for (int i = steps / 2; i < steps; i++) Line(s, pts[i], pts[i + 1], thickness, c);
+        }
+
+        /// <summary>Cross-bar perpendicular to the line, <paramref name="setBack"/> pixels back from
+        /// the point. ER notation stacks two of these for "one and only one".</summary>
+        private static void Bar(RasterSurface s, Point tip, double dir, double headLen,
+                                double setBack, int thickness, Color c)
+        {
+            var at = Along(tip, dir, -setBack);
+            double px = Math.Cos(dir + Math.PI / 2), py = Math.Sin(dir + Math.PI / 2);
+            double half = headLen * 0.55;
+            Line(s, new Point(at.X - px * half, at.Y - py * half),
+                    new Point(at.X + px * half, at.Y + py * half), thickness, c);
+        }
+
+        /// <summary>ER "many": three prongs fanning out of the shaft to the point. Unlike a barbed
+        /// head the middle prong is the line itself continuing, so this head sits *on* the shaft
+        /// rather than capping it.</summary>
+        private static void CrowsFoot(RasterSurface s, Point tip, double dir, double headLen,
+                                      int thickness, Color c)
+        {
+            var root = Along(tip, dir, -headLen);
+            double px = Math.Cos(dir + Math.PI / 2), py = Math.Sin(dir + Math.PI / 2);
+            double half = headLen * 0.55;
+            Line(s, root, tip, thickness, c);
+            Line(s, root, new Point(tip.X + px * half, tip.Y + py * half), thickness, c);
+            Line(s, root, new Point(tip.X - px * half, tip.Y - py * half), thickness, c);
+        }
+
+        /// <summary>An X across the point - not UML, but the standard way to mark a connector as
+        /// blocked or cut in network and process diagrams.</summary>
+        private static void Cross(RasterSurface s, Point tip, double dir, double headLen,
+                                  int thickness, Color c)
+        {
+            double half = headLen * 0.5;
+            var at = Along(tip, dir, -half);
+            for (int i = 0; i < 2; i++)
             {
-                surface.DrawLine(tx, ty, b1x, b1y, c, thickness);
-                surface.DrawLine(tx, ty, b2x, b2y, c, thickness);
+                double a = dir + Math.PI / 4 + i * Math.PI / 2;
+                Line(s, Along(at, a, -half), Along(at, a, half), thickness, c);
             }
         }
     }

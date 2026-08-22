@@ -39,6 +39,12 @@ namespace PaintClone.Services
             new() { Id = "ClearSelection", DisplayName = "Edit: Clear Selection", DefaultKey = Key.Delete, DefaultMods = ModifierKeys.None },
             new() { Id = "Invert", DisplayName = "Image: Invert Colors", DefaultKey = Key.I, DefaultMods = ModifierKeys.Control },
             new() { Id = "Attributes", DisplayName = "Image: Attributes", DefaultKey = Key.E, DefaultMods = ModifierKeys.Control },
+            new() { Id = "SwapColors", DisplayName = "Colors: Swap foreground/background", DefaultKey = Key.X, DefaultMods = ModifierKeys.None },
+            // Photoshop puts this on D, but D is already Tool: Gradient here, and binding both to
+            // it would leave Match() returning whichever happened to enumerate first. Shipped
+            // unbound instead - the control in the toolbox is always clickable, and anyone who
+            // wants the key can assign it in the Shortcut Manager, reassigning Gradient first.
+            new() { Id = "DefaultColors", DisplayName = "Colors: Reset to black/white", DefaultKey = Key.None, DefaultMods = ModifierKeys.None },
             new() { Id = "Cancel", DisplayName = "Cancel current action", DefaultKey = Key.Escape, DefaultMods = ModifierKeys.None },
             new() { Id = "ZoomIn", DisplayName = "View: Zoom In", DefaultKey = Key.OemPlus, DefaultMods = ModifierKeys.Control | ModifierKeys.Shift },
             new() { Id = "ZoomOut", DisplayName = "View: Zoom Out", DefaultKey = Key.OemMinus, DefaultMods = ModifierKeys.Control | ModifierKeys.Shift },

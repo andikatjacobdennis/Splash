@@ -1,8 +1,11 @@
+<!-- Window Width is sized to show the whole default canvas. The tool strip and the right-hand
+     panels take a fixed ~300px between them, so at the previous 1080 an 800x600 picture overflowed
+     the viewport by about forty pixels and the app opened already scrolled sideways. -->
 <Window x:Class="PaintClone.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:dialogs="clr-namespace:PaintClone.Dialogs"
-        Title="untitled - Splash" Height="760" Width="1080"
+        Title="untitled - Splash" Height="760" Width="1140"
         MinHeight="640" MinWidth="820"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
         FontFamily="Segoe UI" FontSize="11"
@@ -98,6 +101,9 @@
 
             <MenuItem Header="_Colors">
                 <MenuItem Header="_Edit Colors..." Click="EditColors_Click"/>
+                <Separator/>
+                <MenuItem Header="_Swap Foreground/Background" InputGestureText="X" Click="SwapColorsMenu_Click"/>
+                <MenuItem Header="_Reset to Black/White" Click="DefaultColorsMenu_Click"/>
             </MenuItem>
 
             <MenuItem x:Name="MenuPlugins" Header="Pl_ugins"/>
@@ -146,16 +152,51 @@
                 <DockPanel LastChildFill="False">
                     <UniformGrid x:Name="ToolGrid" DockPanel.Dock="Top" Columns="2" Rows="10" Margin="2,6"/>
 
-                    <!-- Foreground/background color indicator, Photoshop's overlapping swatches -->
-                    <Grid DockPanel.Dock="Bottom" Width="46" Height="46" Margin="0,4,0,10" HorizontalAlignment="Center">
-                        <Border x:Name="BgSwatch" Width="26" Height="26" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                    <!-- Foreground/background colors, laid out exactly like Photoshop's: two
+                         overlapping swatches, a swap control in the top-right corner, and a small
+                         black/white "reset to defaults" mark in the bottom-left. The two corner
+                         controls are the whole point of the arrangement - without them the swap is
+                         reachable only by re-picking both colours by hand. -->
+                    <Grid DockPanel.Dock="Bottom" Width="58" Height="58" Margin="0,4,0,10" HorizontalAlignment="Center">
+                        <Border x:Name="BgSwatch" Width="30" Height="30" HorizontalAlignment="Right" VerticalAlignment="Bottom"
                                 BorderBrush="{DynamicResource XpBorderLight}" BorderThickness="1" Background="White"
+                                Cursor="Hand"
                                 MouseLeftButtonDown="BgSwatch_Click" MouseRightButtonDown="BgSwatch_RightClick"
-                                ToolTip="Background color"/>
-                        <Border x:Name="FgSwatch" Width="26" Height="26" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                ToolTip="Background color - click to change it"/>
+                        <Border x:Name="FgSwatch" Width="30" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                Margin="0,10,0,0"
                                 BorderBrush="{DynamicResource XpBorderLight}" BorderThickness="1" Background="Black"
+                                Cursor="Hand"
                                 MouseLeftButtonDown="FgSwatch_Click" MouseRightButtonDown="FgSwatch_RightClick"
-                                ToolTip="Foreground color"/>
+                                ToolTip="Foreground color - click to change it"/>
+
+                        <!-- Swap. Background="Transparent" so the whole 16px square is clickable and
+                             not just the ink of the arrow itself, which would be a 1px target. -->
+                        <Grid x:Name="SwapColorsButton" Width="16" Height="16"
+                              HorizontalAlignment="Right" VerticalAlignment="Top"
+                              Background="Transparent" Cursor="Hand"
+                              MouseLeftButtonDown="SwapColors_Click"
+                              ToolTip="Swap foreground and background colors (X)">
+                            <!-- Elbow cornered in the top-right, so each head points AT the swatch
+                                 it stands for: left towards the foreground square up-left, down
+                                 towards the background square below-right. Drawn mirrored to begin
+                                 with, which read as pointing away from both of them. -->
+                            <Path Data="M 5.5,4.5 L 12.5,4.5 L 12.5,11.5"
+                                  Stroke="{DynamicResource PsIconGlyph}" StrokeThickness="1.3"/>
+                            <Path Data="M 1.5,4.5 L 6,2 L 6,7 Z  M 12.5,15 L 10,10.5 L 15,10.5 Z"
+                                  Fill="{DynamicResource PsIconGlyph}"/>
+                        </Grid>
+
+                        <Grid x:Name="DefaultColorsButton" Width="16" Height="16"
+                              HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                              Background="Transparent" Cursor="Hand"
+                              MouseLeftButtonDown="DefaultColors_Click"
+                              ToolTip="Reset to black and white">
+                            <Border Width="10" Height="10" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    Background="White" BorderBrush="{DynamicResource PsIconGlyph}" BorderThickness="1"/>
+                            <Border Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    Background="Black" BorderBrush="{DynamicResource PsIconGlyph}" BorderThickness="1"/>
+                        </Grid>
                     </Grid>
                     <Border x:Name="TransparentSwatch" DockPanel.Dock="Bottom" Width="24" Height="24" Margin="0,0,0,8" HorizontalAlignment="Center"
                             BorderBrush="{DynamicResource XpBorderLight}" BorderThickness="1" Background="{StaticResource CheckerboardBrush}"

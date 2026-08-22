@@ -16,15 +16,24 @@ namespace PaintClone.Services
     /// same simple way as the custom/recent color stores.</summary>
     public static class CanvasSizePresetStore
     {
+        /// <summary>The size a picture starts at when nobody has said otherwise - SVGA. Defined
+        /// here, once, because the startup document, the New Picture dialog's fallback and the
+        /// built-in preset list all need to agree on it; they each carried their own copy of the
+        /// number before, which is three chances for them to drift apart.</summary>
+        public const int DefaultWidth = 800;
+        public const int DefaultHeight = 600;
+
         /// <summary>The fixed, non-persisted size choices offered everywhere a canvas size is
         /// picked from a list (New Picture, Attributes) - one shared table so the two dialogs can
         /// never drift into offering different built-in sizes.</summary>
         public static readonly List<SizePreset> BuiltIn = new()
         {
-            new SizePreset { Name = "Default", Width = 480, Height = 360 },
+            // One row, not two: the default *is* SVGA now, and listing it separately would put two
+            // entries showing identical dimensions next to each other.
+            new SizePreset { Name = "Default (SVGA)", Width = DefaultWidth, Height = DefaultHeight },
             new SizePreset { Name = "Small", Width = 320, Height = 240 },
+            new SizePreset { Name = "Classic Paint", Width = 480, Height = 360 },
             new SizePreset { Name = "VGA", Width = 640, Height = 480 },
-            new SizePreset { Name = "SVGA", Width = 800, Height = 600 },
             new SizePreset { Name = "XGA", Width = 1024, Height = 768 },
             new SizePreset { Name = "HD 720p", Width = 1280, Height = 720 },
             new SizePreset { Name = "Full HD 1080p", Width = 1920, Height = 1080 },

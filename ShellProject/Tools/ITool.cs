@@ -43,8 +43,12 @@ namespace PaintClone.Tools
         /// since the tool never left in the first place.</summary>
         public System.Action FinalizePendingShape;
 
-        /// <summary>Arrowhead style for the Arrow tool.</summary>
-        public ArrowStyle ArrowStyle = ArrowStyle.End;
+        /// <summary>Head drawn at the point the arrow was dragged *from*. Defaults to none, which
+        /// is what an ordinary arrow wants; UML aggregation and composition put their diamond here.</summary>
+        public ArrowHead ArrowHeadStart = ArrowHead.None;
+
+        /// <summary>Head drawn at the point the arrow was dragged *to*.</summary>
+        public ArrowHead ArrowHeadEnd = ArrowHead.OpenBarb;
 
         /// <summary>How many points the Star tool draws.</summary>
         public int StarPoints = 5;
@@ -161,20 +165,80 @@ namespace PaintClone.Tools
         Angular     // sweeps around the start point like a colour wheel
     }
 
-    /// <summary>Arrowhead styles offered by the Arrow tool.</summary>
-    public enum ArrowStyle
+    /// <summary>One arrowhead shape, chosen independently for each end of the line.
+    ///
+    /// Per-end rather than a single combined style, because technical notation is routinely
+    /// asymmetric: UML aggregation puts a hollow diamond at the *source* end and either nothing or
+    /// a plain open arrow at the target, and an ER connector normally carries a different
+    /// multiplicity marker at each end. A flat list of paired styles would need one entry per
+    /// combination - seventeen heads at each end is 289 of them - so the two ends are simply
+    /// picked separately, and ArrowPresets names the combinations that have standard meanings.</summary>
+    public enum ArrowHead
     {
-        End,          // open barbs at the end point only
-        Both,         // open barbs at both ends
-        Filled,       // solid triangular head at the end
-        FilledBoth,   // solid triangular heads at both ends
-        None,         // plain line (useful with Shift-constrained angles)
-        Diamond,      // solid diamond at the end
-        DiamondBoth,  // solid diamonds at both ends
-        Circle,       // solid dot at the end
-        CircleBoth,   // solid dots at both ends
-        Bar,          // flat cross-bar (a "tee") at the end
-        BarBoth,      // flat cross-bars at both ends
+        None,           // plain end
+        OpenBarb,       // two open barbs - UML association / navigability
+        HalfBarb,       // a single barb - UML asynchronous message
+        SolidTriangle,  // filled head - UML synchronous message
+        HollowTriangle, // unfilled closed triangle - UML generalization (with a dashed line, realization)
+        SolidDiamond,   // UML composition
+        HollowDiamond,  // UML aggregation
+        SolidDot,       // filled terminator / junction
+        HollowDot,      // open circle - UML provided interface ("lollipop"), logic inversion bubble
+        Socket,         // half-circle cup - UML required interface (the socket of ball-and-socket)
+        Bar,            // single cross-bar - ER "exactly one"
+        DoubleBar,      // two cross-bars - ER "one and only one"
+        CrowsFoot,      // three prongs - ER "many"
+        CrowsFootBar,   // crow's foot with a bar behind it - ER "one or many"
+        CrowsFootDot,   // crow's foot with a circle behind it - ER "zero or many"
+        BarDot,         // bar with a circle behind it - ER "zero or one"
+        Cross,          // X across the end - a blocked or severed connector
+    }
+
+    /// <summary>A named combination of the two end heads and a line style. These are the shapes
+    /// that actually carry meaning in UML and ER notation - "realization" isn't a head at all, it's
+    /// a hollow triangle *plus* a dashed shaft, and getting that pairing wrong changes what the
+    /// diagram says. Selecting one sets all three underlying options; they stay individually
+    /// adjustable afterwards.</summary>
+    public readonly record struct ArrowPreset(string Name, ArrowHead Start, ArrowHead End, LineStyle Line);
+
+    public static class ArrowPresets
+    {
+        public static readonly ArrowPreset[] All =
+        {
+            // UML class diagrams
+            new("Association",          ArrowHead.None,          ArrowHead.None,           LineStyle.Solid),
+            new("Directed association", ArrowHead.None,          ArrowHead.OpenBarb,       LineStyle.Solid),
+            new("Generalization",       ArrowHead.None,          ArrowHead.HollowTriangle, LineStyle.Solid),
+            new("Realization",          ArrowHead.None,          ArrowHead.HollowTriangle, LineStyle.Dashed),
+            new("Dependency",           ArrowHead.None,          ArrowHead.OpenBarb,       LineStyle.Dashed),
+            new("Aggregation",          ArrowHead.HollowDiamond, ArrowHead.None,           LineStyle.Solid),
+            new("Composition",          ArrowHead.SolidDiamond,  ArrowHead.None,           LineStyle.Solid),
+            new("Directed aggregation", ArrowHead.HollowDiamond, ArrowHead.OpenBarb,       LineStyle.Solid),
+            new("Directed composition", ArrowHead.SolidDiamond,  ArrowHead.OpenBarb,       LineStyle.Solid),
+            // UML interfaces and sequence diagrams
+            new("Provided interface",   ArrowHead.None,          ArrowHead.HollowDot,      LineStyle.Solid),
+            new("Required interface",   ArrowHead.None,          ArrowHead.Socket,         LineStyle.Solid),
+            new("Sync message",         ArrowHead.None,          ArrowHead.SolidTriangle,  LineStyle.Solid),
+            new("Async message",        ArrowHead.None,          ArrowHead.HalfBarb,       LineStyle.Solid),
+            new("Reply message",        ArrowHead.None,          ArrowHead.HalfBarb,       LineStyle.Dashed),
+            // ER / crow's foot multiplicity
+            new("ER one to one",        ArrowHead.Bar,           ArrowHead.Bar,            LineStyle.Solid),
+            new("ER one to many",       ArrowHead.Bar,           ArrowHead.CrowsFoot,      LineStyle.Solid),
+            new("ER many to many",      ArrowHead.CrowsFoot,     ArrowHead.CrowsFoot,      LineStyle.Solid),
+            new("ER exactly one",       ArrowHead.None,          ArrowHead.DoubleBar,      LineStyle.Solid),
+            new("ER zero or one",       ArrowHead.None,          ArrowHead.BarDot,         LineStyle.Solid),
+            new("ER one or many",       ArrowHead.None,          ArrowHead.CrowsFootBar,   LineStyle.Solid),
+            new("ER zero or many",      ArrowHead.None,          ArrowHead.CrowsFootDot,   LineStyle.Solid),
+        };
+
+        /// <summary>The preset matching the current settings exactly, or null if the user has since
+        /// adjusted one of the three parts into a combination that has no standard name.</summary>
+        public static ArrowPreset? Match(ArrowHead start, ArrowHead end, LineStyle line)
+        {
+            foreach (var p in All)
+                if (p.Start == start && p.End == end && p.Line == line) return p;
+            return null;
+        }
     }
 
     /// <summary>How a stroked line or shape outline is broken up. Applies to every tool that draws

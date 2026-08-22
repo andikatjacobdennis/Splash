@@ -33,10 +33,13 @@
                     <RowDefinition/>
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Width:" VerticalAlignment="Center"/>
-                <TextBox x:Name="WidthBox" Grid.Row="0" Grid.Column="1" Text="480" TextChanged="CustomSize_Changed"/>
+                <!-- No literal size here: the constructor fills both boxes from the current
+                     picture's dimensions, so a number in the markup is dead the moment the dialog
+                     opens and only ever serves to disagree with the real default. -->
+                <TextBox x:Name="WidthBox" Grid.Row="0" Grid.Column="1" TextChanged="CustomSize_Changed"/>
                 <TextBlock Grid.Row="0" Grid.Column="2" Text="x" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 <TextBlock Grid.Row="0" Grid.Column="3" Text="Height:" VerticalAlignment="Center"/>
-                <TextBox x:Name="HeightBox" Grid.Row="0" Grid.Column="4" Text="360" TextChanged="CustomSize_Changed"/>
+                <TextBox x:Name="HeightBox" Grid.Row="0" Grid.Column="4" TextChanged="CustomSize_Changed"/>
 
                 <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Content="Save as preset..." Click="SavePreset_Click" HorizontalAlignment="Left" Padding="6,2"/>
             </Grid>

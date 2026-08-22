@@ -1,19 +1,26 @@
 <Window x:Class="PaintClone.Dialogs.AttributesDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Attributes" Height="360" Width="320"
+        Title="Attributes" Height="580" Width="560"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         Icon="pack://application:,,,/Resources/Mascot/mascot.ico"
         FontFamily="Segoe UI" FontSize="11" Background="{DynamicResource XpFace}"
         ShowInTaskbar="False">
     <Grid Margin="10">
         <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+      <TabControl Grid.Row="0" Margin="0,0,0,10">
+       <TabItem Header="Canvas">
+        <Grid Margin="10">
+        <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Text="File last saved: n/a" Margin="0,0,0,8"/>
@@ -74,8 +81,66 @@
                 <RadioButton x:Name="ColorsColor" Content="Colors" GroupName="colors" IsChecked="True"/>
             </StackPanel>
         </GroupBox>
+        </Grid>
+       </TabItem>
 
-        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+       <TabItem x:Name="StatisticsTab" Header="Statistics">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+         <StackPanel Margin="10">
+
+          <GroupBox Header="Histogram" Margin="0,0,0,8">
+            <StackPanel Margin="4">
+              <Border BorderBrush="{DynamicResource XpBorder}" BorderThickness="1"
+                      Background="{DynamicResource PsContentBg}">
+                <!-- Fixed size because the window is not resizable, so there is no layout pass to
+                     wait on before the chart can be drawn to the right dimensions. -->
+                <Canvas x:Name="HistogramCanvas" Width="490" Height="150" ClipToBounds="True"/>
+              </Border>
+              <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock Text="Channel:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <RadioButton x:Name="ChanRgb" Content="RGB" GroupName="chan" IsChecked="True"
+                             Margin="0,0,10,0" Checked="Channel_Changed"/>
+                <RadioButton x:Name="ChanLum" Content="Luminosity" GroupName="chan"
+                             Margin="0,0,10,0" Checked="Channel_Changed"/>
+                <RadioButton x:Name="ChanR" Content="Red" GroupName="chan" Margin="0,0,10,0" Checked="Channel_Changed"/>
+                <RadioButton x:Name="ChanG" Content="Green" GroupName="chan" Margin="0,0,10,0" Checked="Channel_Changed"/>
+                <RadioButton x:Name="ChanB" Content="Blue" GroupName="chan" Checked="Channel_Changed"/>
+              </StackPanel>
+              <TextBlock x:Name="HistSummary" Margin="0,6,0,0"
+                         Foreground="{DynamicResource PsTextDim}" TextWrapping="Wrap"/>
+            </StackPanel>
+          </GroupBox>
+
+          <GroupBox Header="Most used colors" Margin="0,0,0,8">
+            <StackPanel x:Name="TopColorsPanel" Margin="4"/>
+          </GroupBox>
+
+          <GroupBox Header="Coverage" Margin="0,0,0,8">
+            <StackPanel Margin="4">
+              <Border x:Name="CoverageBarHost" Height="18" Margin="0,2,0,6"
+                      BorderBrush="{DynamicResource XpBorder}" BorderThickness="1">
+                <Canvas x:Name="CoverageCanvas" Height="16" ClipToBounds="True"/>
+              </Border>
+              <TextBlock x:Name="CoverageText" TextWrapping="Wrap"
+                         Foreground="{DynamicResource PsTextDim}"/>
+            </StackPanel>
+          </GroupBox>
+
+          <GroupBox Header="Image">
+            <Grid x:Name="StatsGrid" Margin="4">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+            </Grid>
+          </GroupBox>
+
+         </StackPanel>
+        </ScrollViewer>
+       </TabItem>
+      </TabControl>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="OK" Width="75" Margin="0,0,6,0" IsDefault="True" Click="Ok_Click"/>
             <Button Content="Cancel" Width="75" Margin="0,0,6,0" IsCancel="True"/>
             <Button Content="Clear" Width="75" Click="Clear_Click"/>

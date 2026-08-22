@@ -121,7 +121,8 @@ namespace PaintClone
             UpdateColorSwatches();
             BuildActionHandlers();
 
-            NewDocument(480, 360, promptSave: false);
+            NewDocument(CanvasSizePresetStore.DefaultWidth, CanvasSizePresetStore.DefaultHeight,
+                        promptSave: false);
 
             PreviewKeyDown += MainWindow_PreviewKeyDown;
 
@@ -169,19 +170,30 @@ namespace PaintClone
         };
 
         /// <summary>Arrowhead styles shown in the Arrow tool's options row.</summary>
-        private static readonly (ArrowStyle Style, string Glyph, string Tip)[] ArrowStyleChoices =
+        /// <summary>Every head either end can carry. Named by shape, since that is what you are
+        /// picking out of a list of pictures - what each one *means* is on the hover tip, and the
+        /// Preset dropdown next door is where you go if you know the relationship but not the
+        /// notation. Spelling the meaning into the row text instead pushed every name past the
+        /// width of the combo.</summary>
+        private static readonly (ArrowHead Head, string Name, string Tip)[] ArrowHeadChoices =
         {
-            (ArrowStyle.End,         "\u2192", "Open head at the end"),
-            (ArrowStyle.Both,        "\u2194", "Open heads at both ends"),
-            (ArrowStyle.Filled,      "\u27A4", "Solid head at the end"),
-            (ArrowStyle.FilledBoth,  "\u2b0c", "Solid heads at both ends"),
-            (ArrowStyle.Diamond,     "\u25c6", "Diamond at the end"),
-            (ArrowStyle.DiamondBoth, "\u25c6", "Diamonds at both ends"),
-            (ArrowStyle.Circle,      "\u25cf", "Dot at the end"),
-            (ArrowStyle.CircleBoth,  "\u25cf", "Dots at both ends"),
-            (ArrowStyle.Bar,         "\u22a5", "Cross-bar at the end"),
-            (ArrowStyle.BarBoth,     "\u22a5", "Cross-bars at both ends"),
-            (ArrowStyle.None,        "\u2015", "No head (plain line)"),
+            (ArrowHead.None,           "None",       "Leave this end plain"),
+            (ArrowHead.OpenBarb,       "Open arrow", "UML association / navigability; on a dashed line, a dependency"),
+            (ArrowHead.HalfBarb,       "Half arrow", "UML asynchronous message (sequence diagrams)"),
+            (ArrowHead.SolidTriangle,  "Solid arrow", "A filled arrowhead; UML synchronous message"),
+            (ArrowHead.HollowTriangle, "Hollow triangle", "UML generalization (inheritance); on a dashed line, a realization"),
+            (ArrowHead.HollowDiamond,  "Hollow diamond", "UML aggregation - a \"has a\" relationship"),
+            (ArrowHead.SolidDiamond,   "Solid diamond", "UML composition - the part cannot outlive the whole"),
+            (ArrowHead.HollowDot,      "Hollow circle", "UML provided interface (the \"lollipop\"); an inversion bubble in logic diagrams"),
+            (ArrowHead.SolidDot,       "Solid circle", "A filled terminator or junction point"),
+            (ArrowHead.Socket,         "Socket",     "UML required interface - the socket of ball-and-socket notation"),
+            (ArrowHead.Bar,            "Bar",        "ER crow's-foot notation: one"),
+            (ArrowHead.DoubleBar,      "Double bar", "ER crow's-foot notation: one and only one"),
+            (ArrowHead.CrowsFoot,      "Crow's foot", "ER crow's-foot notation: many"),
+            (ArrowHead.CrowsFootBar,   "Crow's foot + bar", "ER crow's-foot notation: one or many"),
+            (ArrowHead.CrowsFootDot,   "Crow's foot + circle", "ER crow's-foot notation: zero or many"),
+            (ArrowHead.BarDot,         "Bar + circle", "ER crow's-foot notation: zero or one"),
+            (ArrowHead.Cross,          "Cross",      "Marks the connector as blocked or cut"),
         };
 
         /// <summary>Every font family actually installed on this machine, sorted by name - so the
@@ -795,7 +807,8 @@ namespace PaintClone
                 PenSize = _ctx?.PenSize ?? 1,
                 ShapeFillMode = _ctx?.ShapeFillMode ?? ShapeFillMode.OutlineOnly,
                 BrushShape = _ctx?.BrushShape ?? BrushShape.Round,
-                ArrowStyle = _ctx?.ArrowStyle ?? ArrowStyle.End,
+                ArrowHeadStart = _ctx?.ArrowHeadStart ?? ArrowHead.None,
+                ArrowHeadEnd = _ctx?.ArrowHeadEnd ?? ArrowHead.OpenBarb,
                 AntiAlias = _ctx?.AntiAlias ?? false,
                 WandTolerance = _ctx?.WandTolerance ?? 0,
                 WandContiguous = _ctx?.WandContiguous ?? true,
@@ -1504,6 +1517,8 @@ namespace PaintClone
                 ["ClearSelection"] = () => ClearSelection_Click(null, null),
                 ["Invert"] = () => Invert_Click(null, null),
                 ["Attributes"] = () => Attributes_Click(null, null),
+                ["SwapColors"] = () => SwapColors_Click(null, null),
+                ["DefaultColors"] = () => DefaultColors_Click(null, null),
                 ["Cancel"] = () =>
                 {
                     _tools[_currentToolKey].Cancel(_ctx);
@@ -1629,6 +1644,10 @@ namespace PaintClone
             public string Text { get; init; }
             public ImageSource Preview { get; init; }
             public object Value { get; init; }
+            /// <summary>Longer explanation shown on hover. Lets a row stay short enough to fit the
+            /// combo's width without losing the detail that makes it choosable - "Hollow diamond"
+            /// is what to look for, "UML aggregation" is why you'd want it.</summary>
+            public string Tip { get; init; }
         }
 
         private DataTemplate _optionRowTemplate;
@@ -1638,7 +1657,7 @@ namespace PaintClone
         private DataTemplate OptionRowTemplate => _optionRowTemplate ??= (DataTemplate)System.Windows.Markup.XamlReader.Parse(
             @"<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
                             xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>
-                <StackPanel Orientation='Horizontal'>
+                <StackPanel Orientation='Horizontal' ToolTip='{Binding Tip}'>
                   <Image Source='{Binding Preview}' Stretch='None' Margin='0,0,6,0'
                          VerticalAlignment='Center' SnapsToDevicePixels='True'
                          RenderOptions.BitmapScalingMode='NearestNeighbor'>
@@ -1658,7 +1677,8 @@ namespace PaintClone
 
         private ComboBox AddOptionCombo<T>(string label, IEnumerable<(string Text, T Value)> items,
                                            T current, Action<T> onSelect, double width = 104,
-                                           Func<T, ImageSource> preview = null)
+                                           Func<T, ImageSource> preview = null,
+                                           Func<T, string> tip = null)
         {
             AddOptionLabel(label);
             var combo = new ComboBox
@@ -1676,7 +1696,8 @@ namespace PaintClone
                 {
                     Text = text,
                     Value = value,
-                    Preview = preview == null ? null : SafePreview(preview, value)
+                    Preview = preview == null ? null : SafePreview(preview, value),
+                    Tip = tip?.Invoke(value)
                 };
                 combo.Items.Add(row);
                 if (EqualityComparer<T>.Default.Equals(value, current)) selected = row;
@@ -1839,9 +1860,48 @@ namespace PaintClone
 
             if (key == "Arrow")
             {
-                AddOptionCombo("Head:", ArrowStyleChoices.Select(a => (a.Tip, a.Style)),
-                    _ctx.ArrowStyle, v => _ctx.ArrowStyle = v, 178,
-                    OptionPreviews.ArrowStylePreview);
+                // Presets first, because a relationship is what you actually want to draw - picking
+                // "Realization" is one choice instead of three (hollow triangle, no start head,
+                // dashed line), and getting any one of those three wrong changes what the diagram
+                // means. The individual pickers stay right beside it for anything unnamed.
+                var presets = new List<(string, ArrowPreset?)> { ("Custom", null) };
+                presets.AddRange(ArrowPresets.All.Select(p => (p.Name, (ArrowPreset?)p)));
+
+                AddOptionCombo("Preset:", presets,
+                    ArrowPresets.Match(_ctx.ArrowHeadStart, _ctx.ArrowHeadEnd, _ctx.LineStyle),
+                    v =>
+                    {
+                        if (v is not ArrowPreset p) return;   // "Custom" is a label, not a command
+                        _ctx.ArrowHeadStart = p.Start;
+                        _ctx.ArrowHeadEnd = p.End;
+                        _ctx.LineStyle = p.Line;
+                        // A preset moves three other controls at once, so the bar has to be rebuilt
+                        // for them to show what is now selected.
+                        Dispatcher.BeginInvoke(new Action(() => BuildToolOptions(_currentToolKey)),
+                            System.Windows.Threading.DispatcherPriority.Input);
+                    }, 196,
+                    v => v is ArrowPreset p ? OptionPreviews.ArrowPresetPreview(p) : null,
+                    v => v is ArrowPreset p
+                        ? $"{p.Start} → {p.End}, {p.Line} line"
+                        : "Whatever the two ends are currently set to");
+
+                string TipFor(ArrowHead h) => ArrowHeadChoices.First(a => a.Head == h).Tip;
+
+                // Changing an end can make the combination stop being the named relationship the
+                // Preset box is showing - or start being a different one. Rebuilding keeps that
+                // label honest; without it the bar went on claiming "Directed association" after
+                // the end head had been changed to something else entirely.
+                void RefreshPreset() =>
+                    Dispatcher.BeginInvoke(new Action(() => BuildToolOptions(_currentToolKey)),
+                        System.Windows.Threading.DispatcherPriority.Input);
+
+                AddOptionCombo("Start:", ArrowHeadChoices.Select(a => (a.Name, a.Head)),
+                    _ctx.ArrowHeadStart, v => { _ctx.ArrowHeadStart = v; RefreshPreset(); }, 186,
+                    OptionPreviews.ArrowStartHeadPreview, TipFor);
+
+                AddOptionCombo("End:", ArrowHeadChoices.Select(a => (a.Name, a.Head)),
+                    _ctx.ArrowHeadEnd, v => { _ctx.ArrowHeadEnd = v; RefreshPreset(); }, 186,
+                    OptionPreviews.ArrowHeadPreview, TipFor);
             }
 
             // Line style applies to anything that strokes an outline. Filled-only shapes still show
@@ -2400,7 +2460,8 @@ namespace PaintClone
 
         private void New_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new NewDocumentDialog(_document?.Width ?? 480, _document?.Height ?? 360) { Owner = this };
+            var dlg = new NewDocumentDialog(_document?.Width ?? CanvasSizePresetStore.DefaultWidth,
+                                            _document?.Height ?? CanvasSizePresetStore.DefaultHeight) { Owner = this };
             if (dlg.ShowDialog() != true) return;
             NewDocument(dlg.ResultWidth, dlg.ResultHeight);
         }
@@ -3151,6 +3212,14 @@ namespace PaintClone
             ThemeManager.Apply(themeName);
             MenuThemeDark.IsChecked = themeName == ThemeManager.Dark;
             MenuThemeLight.IsChecked = themeName == ThemeManager.Light;
+
+            // The dropdown previews are rasterized once, in whatever glyph colour the theme had at
+            // the time, and then frozen - a DynamicResource can't reach inside a finished bitmap.
+            // So they have to be redrawn, or every preview in the options bar stays the old theme's
+            // colour: switching to Light left them pale grey on pale grey, all but invisible.
+            // Queued behind the resource swap so GlyphColor() reads the theme that's now current.
+            Dispatcher.BeginInvoke(new Action(() => BuildToolOptions(_currentToolKey)),
+                System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         private void ShortcutManager_Click(object sender, RoutedEventArgs e)
@@ -3305,7 +3374,56 @@ namespace PaintClone
             RefreshSelectionHandles();
             return true;
         }
-        private void Invert_Click(object sender, RoutedEventArgs e) => ApplyTransform(InvertColors, "Invert Colors");
+        /// <summary>Invert Colors is an *Image* command, so it inverts the whole picture - every
+        /// layer - not just the active one.
+        ///
+        /// Inverting only the active layer is what it used to do, and it made the command look
+        /// broken in the single most common situation there is. A new document starts with an empty
+        /// transparent layer selected above an opaque white Background (see NewDocument), so
+        /// whatever you paint lands on that top layer. Inverting only it turned black paint white,
+        /// over a white background that hadn't changed - the picture went blank and nothing
+        /// appeared to have happened. Whether it "worked" came down to which layer happened to be
+        /// selected, which is exactly the kind of invisible dependency that reads as a bug.</summary>
+        private void Invert_Click(object sender, RoutedEventArgs e)
+        {
+            FinalizeFloatingSelection();
+            _history.PushUndoState(_document, "Invert Colors");
+
+            foreach (var layer in _document.Layers)
+            {
+                if (layer.Text != null)
+                {
+                    // A text layer's Surface is only a cache regenerated from its TextLayerData, so
+                    // inverting those pixels would be thrown away by the next re-render (a move, a
+                    // font change, reopening the file). The colour it draws with is the real state.
+                    // Inverting that keeps the layer as live, editable text instead of rasterizing
+                    // it behind the user's back to make one menu command work.
+                    layer.Text.Color = Inverted(layer.Text.Color);
+                    TextLayerRenderer.Render(layer.Surface, layer.Text);
+                    continue;
+                }
+
+                var s = layer.Surface;
+                s.Lock();
+                try
+                {
+                    // In place: every pixel's new value depends only on its own old value, so
+                    // there's nothing to be gained from a second surface.
+                    for (int y = 0; y < s.Height; y++)
+                        for (int x = 0; x < s.Width; x++)
+                            s.SetPixel(x, y, Inverted(s.GetPixel(x, y)));
+                }
+                finally { s.Unlock(); }
+            }
+
+            _document.MarkDirty();
+            RefreshCanvasBinding();
+        }
+
+        /// <summary>Inverts a colour's channels and leaves its alpha alone, so a transparent pixel
+        /// stays transparent instead of turning into an opaque one.</summary>
+        private static Color Inverted(Color c)
+            => Color.FromArgb(c.A, (byte)(255 - c.R), (byte)(255 - c.G), (byte)(255 - c.B));
 
         private void ApplyTransform(Action<RasterSurface, RasterSurface> op, string label)
         {
@@ -3333,16 +3451,6 @@ namespace PaintClone
             for (int y = 0; y < src.Height; y++)
                 for (int x = 0; x < src.Width; x++)
                     dst.SetPixel(x, src.Height - 1 - y, src.GetPixel(x, y));
-        }
-
-        private static void InvertColors(RasterSurface src, RasterSurface dst)
-        {
-            for (int y = 0; y < src.Height; y++)
-                for (int x = 0; x < src.Width; x++)
-                {
-                    var c = src.GetPixel(x, y);
-                    dst.SetPixel(x, y, Color.FromArgb(c.A, (byte)(255 - c.R), (byte)(255 - c.G), (byte)(255 - c.B)));
-                }
         }
 
         private void ApplyRotate(int degrees)
@@ -3421,7 +3529,8 @@ namespace PaintClone
         private void Attributes_Click(object sender, RoutedEventArgs e)
         {
             FinalizeFloatingSelection();
-            var dlg = new AttributesDialog(_document.Width, _document.Height, _document.DpiX) { Owner = this };
+            var dlg = new AttributesDialog(_document.Width, _document.Height, _document.DpiX,
+                                           ImageStatistics.Compute(_document)) { Owner = this };
             if (dlg.ShowDialog() != true) return;
             _history.PushUndoState(_document, dlg.ClearRequested ? "Clear Image" : "Attributes");
             if (dlg.ClearRequested)
@@ -3459,25 +3568,41 @@ namespace PaintClone
             if (dlg.ShowDialog() == true) _colors.SetForeground(dlg.SelectedColor);
         }
 
+        // A single click opens the picker, the way Photoshop's swatches work. These used to require
+        // a double-click, with a single click doing nothing at all - so the obvious gesture on the
+        // most obvious target in the window was silently inert.
         private void FgSwatch_Click(object sender, MouseButtonEventArgs e)
         {
-            if (e.ClickCount == 2)
-            {
-                var dlg = new EditColorsDialog(_colors.Foreground) { Owner = this };
-                if (dlg.ShowDialog() == true) _colors.SetForeground(dlg.SelectedColor);
-            }
+            var dlg = new EditColorsDialog(_colors.Foreground) { Owner = this };
+            if (dlg.ShowDialog() == true) _colors.SetForeground(dlg.SelectedColor);
         }
         private void FgSwatch_RightClick(object sender, MouseButtonEventArgs e) { }
 
         private void BgSwatch_Click(object sender, MouseButtonEventArgs e)
         {
-            if (e.ClickCount == 2)
-            {
-                var dlg = new EditColorsDialog(_colors.Background) { Owner = this };
-                if (dlg.ShowDialog() == true) _colors.SetBackground(dlg.SelectedColor);
-            }
+            var dlg = new EditColorsDialog(_colors.Background) { Owner = this };
+            if (dlg.ShowDialog() == true) _colors.SetBackground(dlg.SelectedColor);
         }
         private void BgSwatch_RightClick(object sender, MouseButtonEventArgs e) { }
+
+        /// <summary>Swaps foreground and background - Photoshop's X. ColorManager has had
+        /// SwapColors since it was written; until now nothing ever called it, so the only way to
+        /// exchange two colours was to pick them both again by hand.</summary>
+        private void SwapColors_Click(object sender, MouseButtonEventArgs e) => _colors.SwapColors();
+        private void SwapColorsMenu_Click(object sender, RoutedEventArgs e) => _colors.SwapColors();
+
+        /// <summary>Resets to black-on-white, matching the small mark this hangs off and
+        /// Photoshop's D. Deliberately white rather than the app's own startup background of
+        /// transparent: the control shows a black square over a white one, and it should hand back
+        /// what it depicts. Transparent already has its own swatch directly below.</summary>
+        private void DefaultColors_Click(object sender, MouseButtonEventArgs e) => ResetColorsToDefault();
+        private void DefaultColorsMenu_Click(object sender, RoutedEventArgs e) => ResetColorsToDefault();
+
+        private void ResetColorsToDefault()
+        {
+            _colors.SetForeground(Colors.Black);
+            _colors.SetBackground(Colors.White);
+        }
 
         // ===================================================================
         // Help menu

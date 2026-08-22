@@ -80,9 +80,17 @@ namespace PaintClone.Dialogs
                 "The Gradient tool blends the foreground colour into the background colour across " +
                 "the area you drag; the direction you drag sets the angle of the blend. A gradient " +
                 "is added to the picture as soon as you release the mouse and the Gradient tool " +
-                "stays selected, so you can lay down several in a row. The Arrow " +
-                "tool offers open or solid heads at one or both ends, and the Star tool lets you " +
-                "choose between 3 and 12 points - both in the tool options area.\n\n" +
+                "stays selected, so you can lay down several in a row. The Star tool lets you " +
+                "choose between 3 and 12 points in the tool options area.\n\n" +
+                "The Arrow tool picks a head for each end of the line separately, from seventeen " +
+                "shapes covering ordinary arrows and the notations used in technical diagrams - " +
+                "hollow and solid triangles and diamonds, circles, sockets, bars and crow's feet. " +
+                "Because a relationship is usually more than a head - a UML realization is a hollow " +
+                "triangle on a dashed line, where the same head on a solid line means something " +
+                "else - the Preset dropdown names the standard combinations (generalization, " +
+                "realization, dependency, aggregation, composition, interfaces, sequence-diagram " +
+                "messages, and the ER cardinalities) and sets both ends and the line style at once. " +
+                "Everything stays adjustable afterwards; the preset then reads \"Custom\".\n\n" +
                 "Hold Shift while dragging a line, arrow, or gradient to snap its direction to " +
                 "45-degree steps, which includes exact horizontal and vertical.\n\n" +
                 "The Curve tool works in three drags: drag once to draw the straight baseline, then " +
@@ -241,7 +249,13 @@ namespace PaintClone.Dialogs
                 "New layers start fully transparent, so anything on layers below shows through until " +
                 "you draw on them. Saving, printing, and copying the whole picture always combines " +
                 "every visible layer into one flat image automatically - you don't need to merge them " +
-                "first just to save.");
+                "first just to save.\n\n" +
+                "Drawing tools act on the active layer alone, but Image > Invert Colors acts on the " +
+                "whole picture, every layer at once - it's a change to the image, not to one sheet " +
+                "of it. That matters most when you've painted on the transparent layer a new picture " +
+                "starts you on: inverting just that layer would turn black paint white against a " +
+                "white background that hadn't changed, and the picture would look like it had gone " +
+                "blank instead of inverted.");
 
             Add("Transparency",
                 "Paint supports a true transparent color, shown as a checkered pattern wherever it " +
@@ -260,6 +274,7 @@ namespace PaintClone.Dialogs
                 "Ctrl+X   Cut\nCtrl+C   Copy\nCtrl+V   Paste\n" +
                 "Ctrl+A   Select All\nCtrl+D   Deselect\nDelete   Clear Selection\n" +
                 "Ctrl+E   Attributes\nCtrl+I   Invert Colors\n" +
+                "X        Swap foreground and background colors\n" +
                 "Esc      Cancel the current action\n\n" +
                 "View:\n" +
                 "Ctrl++ / Ctrl+-   Zoom in / out\nCtrl+0   Reset zoom to 100%\nF11   Full screen\n\n" +

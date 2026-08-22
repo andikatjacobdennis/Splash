@@ -156,25 +156,47 @@ namespace PaintClone.Services
             return Finish(s);
         }
 
-        /// <summary>A short line carrying the chosen arrowhead style, drawn with ArrowTool's own
-        /// head code so the dropdown shows the head you'll actually get. An earlier version drew a
-        /// barbed head for every entry, which meant diamond, dot and bar all previewed as something
-        /// they aren't.</summary>
-        public static ImageSource ArrowStylePreview(ArrowStyle style)
+        /// <summary>A short line carrying the chosen head at its right-hand end, drawn with
+        /// ArrowTool's own code so the dropdown shows the head you'll actually get. An earlier
+        /// version drew a barbed head for every entry, which meant diamond, dot and bar all
+        /// previewed as something they aren't.</summary>
+        public static ImageSource ArrowHeadPreview(ArrowHead head)
+            => ArrowPreview(ArrowHead.None, head, width: HeadPreviewWidth);
+
+        /// <summary>The same, mirrored: the head sits at the left-hand end, matching where a start
+        /// head lands on a left-to-right arrow. Aggregation and composition are only distinguishable
+        /// from a plain line by which *end* their diamond is on, so the start dropdown has to show
+        /// that rather than reusing the end-head picture.</summary>
+        public static ImageSource ArrowStartHeadPreview(ArrowHead head)
+            => ArrowPreview(head, ArrowHead.None, width: HeadPreviewWidth);
+
+        /// <summary>A whole named relationship - both heads and the line style together. UML
+        /// realization is a hollow triangle on a *dashed* shaft; showing the head alone would make
+        /// it indistinguishable from generalization in the list.</summary>
+        public static ImageSource ArrowPresetPreview(ArrowPreset preset)
+            => ArrowPreview(preset.Start, preset.End, preset.Line);
+
+        /// <summary>Narrower than a preset's, because a head dropdown has to leave room for names
+        /// as long as "Crow's foot + circle" before the row starts truncating.</summary>
+        private const int HeadPreviewWidth = 46;
+
+        private static ImageSource ArrowPreview(ArrowHead start, ArrowHead end,
+                                                LineStyle line = LineStyle.Solid, int width = 62)
         {
-            const int w = 34, h = 18;
+            // Wide enough that the composite ER heads - a crow's foot with a circle behind it
+            // reaches back about two head-lengths - still leave a recognisable stretch of shaft.
+            int w = width; const int h = 20;
             var s = Blank(w, h);
             var c = GlyphColor();
             s.Lock();
             try
             {
                 int y = h / 2;
-                var start = new Point(3, y);
-                var end = new Point(w - 4, y);
-                s.DrawLine((int)start.X, (int)start.Y, (int)end.X, (int)end.Y, c, 1);
-                ArrowTool.DrawHeadsFor(s, style, start, end, 0 /* pointing right */, 7, 1, c);
+                s.DashPattern = LineStyles.PatternFor(line, 1);
+                s.DashPhase = 0;
+                ArrowTool.DrawArrow(s, start, end, new Point(4, y), new Point(w - 5, y), 8, 1, c);
             }
-            finally { s.Unlock(); }
+            finally { s.DashPattern = null; s.Unlock(); }
             return Finish(s);
         }
 
